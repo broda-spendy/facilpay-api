@@ -38,6 +38,7 @@ import { EmailNotificationService } from '../notifications/email-notification.se
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { StellarService } from '../stellar/stellar.service';
 import { UsersService } from '../users/users.service';
+import { PaymentLinksService } from '../payment-links/payment-links.service';
 
 const DEFAULT_PAYMENT_EXPIRY_SECONDS = 1800;
 
@@ -64,6 +65,7 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly stellarService: StellarService,
     private readonly usersService: UsersService,
+    private readonly paymentLinksService: PaymentLinksService,
   ) {
     this.logger = appLogger.child({ module: PaymentsService.name });
   }
@@ -861,6 +863,7 @@ export class PaymentsService {
         );
       }
 
+      const previousStatus = payment.status;
       payment.status = webhookDto.status;
       if (webhookDto.externalReference) {
         payment.externalReference = webhookDto.externalReference;
@@ -878,6 +881,16 @@ export class PaymentsService {
       if (updatedPayment.status === PaymentStatus.COMPLETED) {
         await this.sendPaymentConfirmedNotifications(updatedPayment);
         await this.processSplitsForPayment(updatedPayment);
+      }
+
+      if (
+        updatedPayment.status === PaymentStatus.COMPLETED &&
+        previousStatus !== PaymentStatus.COMPLETED &&
+        updatedPayment.paymentLinkId
+      ) {
+        await this.paymentLinksService.incrementCompletions(
+          updatedPayment.paymentLinkId,
+        );
       }
 
       return updatedPayment;
