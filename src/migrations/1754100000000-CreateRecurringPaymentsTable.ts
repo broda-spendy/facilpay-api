@@ -81,6 +81,26 @@ export class CreateRecurringPaymentsTable1754100000000
             isNullable: true,
           },
           {
+            name: 'endAt',
+            type: 'timestamp',
+            isNullable: true,
+          },
+          {
+            name: 'maxOccurrences',
+            type: 'int',
+            isNullable: true,
+          },
+          {
+            name: 'occurrences',
+            type: 'int',
+            default: 0,
+          },
+          {
+            name: 'consecutiveFailures',
+            type: 'int',
+            default: 0,
+          },
+          {
             name: 'cancelledAt',
             type: 'timestamp',
             isNullable: true,

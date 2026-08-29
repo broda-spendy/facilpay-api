@@ -4,7 +4,7 @@ import { WEBHOOK_EVENT_TYPES, WebhookEventType } from '../entities/webhook-endpo
 
 export class UpdateWebhookEndpointDto {
   @IsOptional()
-  @IsUrl({}, { message: 'url must be a valid HTTPS URL' })
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { message: 'url must be a valid HTTPS URL' })
   @ApiPropertyOptional({
     description: 'New HTTPS URL for this endpoint',
     example: 'https://merchant.example.com/webhooks/v2',

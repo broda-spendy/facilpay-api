@@ -52,6 +52,7 @@ describe('AuthService - Password Reset', () => {
           provide: MailService,
           useValue: {
             sendPasswordResetEmail: jest.fn(),
+            sendPasswordChangedEmail: jest.fn(),
           },
         },
         {
@@ -225,6 +226,10 @@ describe('AuthService - Password Reset', () => {
       expect(refreshTokenRepository.update).toHaveBeenCalledWith(
         { userId: user.id },
         { revoked: true },
+      );
+      expect(mailService.sendPasswordChangedEmail).toHaveBeenCalledTimes(1);
+      expect(mailService.sendPasswordChangedEmail).toHaveBeenCalledWith(
+        user.email,
       );
     });
 

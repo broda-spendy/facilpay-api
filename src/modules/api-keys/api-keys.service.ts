@@ -14,6 +14,7 @@ import { CreateApiKeyDto } from './dto/create-api-key.dto';
 import { UpdateApiKeyDto } from './dto/update-api-key.dto';
 import { GetApiKeyUsageDto } from './dto/get-api-key-usage.dto';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class ApiKeysService {
@@ -23,11 +24,15 @@ export class ApiKeysService {
     @InjectRepository(ApiKeyUsage)
     private readonly apiKeyUsageRepository: Repository<ApiKeyUsage>,
     private readonly configService: ConfigService,
+    private readonly auditLogsService: AuditLogsService,
   ) {}
 
   async create(
     userId: string,
     dto: CreateApiKeyDto,
+    actorId?: string,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ apiKey: ApiKey; plaintext: string }> {
     const environment = dto.environment ?? ApiKeyEnvironment.LIVE;
     const rawToken = randomBytes(32).toString('hex');
@@ -51,6 +56,23 @@ export class ApiKeysService {
     });
 
     const saved = await this.apiKeyRepository.save(apiKey);
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? userId,
+      actorType: 'user',
+      action: 'api_key.created',
+      resourceType: 'api_key',
+      resourceId: saved.id,
+      ipAddress,
+      userAgent,
+      metadata: {
+        name: dto.name,
+        scope: dto.scope ?? ApiKeyScope.READ,
+        environment,
+        keyPrefix: saved.keyPrefix,
+      },
+    });
+
     return { apiKey: saved, plaintext };
   }
 
@@ -61,13 +83,24 @@ export class ApiKeysService {
     });
   }
 
-  async revoke(id: string, userId: string): Promise<void> {
+  async revoke(id: string, userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<void> {
     const key = await this.apiKeyRepository.findOne({ where: { id, userId } });
     if (!key) {
       throw new NotFoundException(`API key with ID ${id} not found`);
     }
     key.isActive = false;
     await this.apiKeyRepository.save(key);
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? userId,
+      actorType: 'user',
+      action: 'api_key.revoked',
+      resourceType: 'api_key',
+      resourceId: id,
+      ipAddress,
+      userAgent,
+      metadata: { name: key.name, keyPrefix: key.keyPrefix },
+    });
   }
 
   async update(id: string, userId: string, dto: UpdateApiKeyDto): Promise<ApiKey> {
@@ -82,7 +115,7 @@ export class ApiKeysService {
     return this.apiKeyRepository.save(key);
   }
 
-  async rotate(id: string, userId: string): Promise<{ apiKey: ApiKey; plaintext: string }> {
+  async rotate(id: string, userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<{ apiKey: ApiKey; plaintext: string }> {
     const key = await this.apiKeyRepository.findOne({ where: { id, userId, isActive: true } });
     if (!key) {
       throw new NotFoundException(`API key with ID ${id} not found`);
@@ -107,6 +140,24 @@ export class ApiKeysService {
       isActive: true,
     });
     const saved = await this.apiKeyRepository.save(newKey);
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? userId,
+      actorType: 'user',
+      action: 'api_key.rotated',
+      resourceType: 'api_key',
+      resourceId: id,
+      ipAddress,
+      userAgent,
+      metadata: {
+        name: key.name,
+        scope: key.scope,
+        environment: key.environment,
+        oldKeyPrefix: key.keyPrefix,
+        newKeyPrefix: saved.keyPrefix,
+      },
+    });
+
     return { apiKey: saved, plaintext };
   }
 

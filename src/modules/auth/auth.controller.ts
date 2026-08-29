@@ -10,8 +10,9 @@ import {
   HttpStatus,
   Res,
   UseGuards,
+  Req,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from '../users/dto/register.dto';
@@ -19,9 +20,11 @@ import { LoginDto } from '../users/dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { VerifyEmailQueryDto } from './dto/verify-email-query.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
+import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
 import { AuthThrottle } from '../throttler/throttler.decorator';
 import { Public } from './decorators/public.decorator';
 import { RolesGuard } from './roles.guard';
@@ -193,8 +196,13 @@ export class AuthController {
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: Request,
   ) {
-    const result = await this.authService.login(loginDto);
+    const result = await this.authService.login(
+      loginDto,
+      req.ip,
+      req.headers['user-agent'],
+    );
     if (result['2fa_required']) {
       res.status(HttpStatus.ACCEPTED);
     }
@@ -224,8 +232,8 @@ export class AuthController {
   @ApiUnauthorizedResponse({
     description: 'Missing or invalid bearer token.',
   })
-  async enableTwoFactor(@CurrentUser() user: User) {
-    return this.authService.enableTwoFactor(user.id);
+  async enableTwoFactor(@CurrentUser() user: User, @Req() req: Request) {
+    return this.authService.enableTwoFactor(user.id, req.ip, req.headers['user-agent']);
   }
 
   @Post('2fa/verify')
@@ -262,8 +270,9 @@ export class AuthController {
   async verifyTwoFactor(
     @CurrentUser() user: User,
     @Body() dto: TwoFactorCodeDto,
+    @Req() req: Request,
   ) {
-    return this.authService.verifyTwoFactor(user.id, dto);
+    return this.authService.verifyTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
   @AuthThrottle()
@@ -324,8 +333,47 @@ export class AuthController {
   async disableTwoFactor(
     @CurrentUser() user: User,
     @Body() dto: DisableTwoFactorDto,
+    @Req() req: Request,
   ) {
-    return this.authService.disableTwoFactor(user.id, dto);
+    return this.authService.disableTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
+  }
+
+  @Post('2fa/backup-codes/regenerate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Regenerate two-factor backup codes',
+    description:
+      'Requires the account password or a valid TOTP code. Replaces the current backup codes with a fresh set of 10 without changing the TOTP secret or requiring /2fa/verify again.',
+  })
+  @ApiBody({ type: RegenerateBackupCodesDto })
+  @ApiOkResponse({
+    description: 'Backup codes regenerated.',
+    schema: {
+      example: {
+        backupCodes: ['a1b2c3d4', 'e5f6a7b8'],
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Two-factor authentication is not enabled, or neither password nor TOTP code was provided.',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid password or invalid TOTP code.',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid password',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  async regenerateBackupCodes(
+    @CurrentUser() user: User,
+    @Body() dto: RegenerateBackupCodesDto,
+  ) {
+    return this.authService.regenerateBackupCodes(user.id, dto);
   }
 
   @Public()
@@ -358,6 +406,38 @@ export class AuthController {
   })
   async verifyEmail(@Query() query: VerifyEmailQueryDto) {
     return this.authService.verifyEmail(query.token);
+  }
+
+  @AuthThrottle()
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend verification email',
+    description:
+      'Issues a new 24-hour verification link for an unverified account. Returns the same generic response regardless of whether the email exists or is already verified, to prevent user enumeration. Rate limited to 5 requests per 15 minutes.',
+  })
+  @ApiBody({ type: ResendVerificationDto })
+  @ApiOkResponse({
+    description: 'Verification email resent (if the account is unverified).',
+    schema: {
+      example: {
+        message:
+          'If an account with that email exists, a verification link has been sent.',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests. Rate limit exceeded.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+      },
+    },
+  })
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    return this.authService.resendVerificationEmail(dto);
   }
 
   @Public()
@@ -435,8 +515,8 @@ export class AuthController {
       },
     },
   })
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto);
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.authService.forgotPassword(dto, req.ip, req.headers['user-agent']);
   }
 
   @AuthThrottle()
@@ -476,8 +556,8 @@ export class AuthController {
       },
     },
   })
-  async resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto);
+  async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
+    return this.authService.resetPassword(dto, req.ip, req.headers['user-agent']);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -530,8 +610,49 @@ export class AuthController {
       },
     },
   })
-  async unlockAccount(@Param('userId') userId: string) {
-    return this.usersService.unlockAccount(userId);
+  async unlockAccount(@Param('userId') userId: string, @CurrentUser() user: User, @Req() req: Request) {
+    return this.usersService.unlockAccount(userId, user.id, req.ip, req.headers['user-agent']);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Get('admin/roles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List all roles (Admin only)',
+    description: 'Returns all roles and their permissions. Requires manage_roles permission.',
+  })
+  @ApiOkResponse({
+    description: 'Roles returned successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  async getRoles() {
+    return this.authService.getRoles();
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Get('admin/roles/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get a role by ID (Admin only)',
+    description: 'Returns a single role with its permissions. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiOkResponse({
+    description: 'Role returned successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  async getRoleById(@Param('id') id: string) {
+    return this.authService.getRoleById(id);
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -569,7 +690,7 @@ export class AuthController {
   @ApiForbiddenResponse({
     description: 'Insufficient permissions.',
   })
-  async assignRole(@Param('id') userId: string, @Body() dto: AssignRoleDto) {
-    return this.authService.assignRole(userId, dto.roleId);
+  async assignRole(@Param('id') userId: string, @Body() dto: AssignRoleDto, @CurrentUser() user: User, @Req() req: Request) {
+    return this.authService.assignRole(userId, dto.roleId, user.id, req.ip, req.headers['user-agent']);
   }
 }

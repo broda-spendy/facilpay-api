@@ -67,6 +67,18 @@ export class RecurringPayment {
   lastRunAt: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
+  endAt: Date | null;
+
+  @Column({ type: 'int', nullable: true })
+  maxOccurrences: number | null;
+
+  @Column({ type: 'int', default: 0 })
+  occurrences: number;
+
+  @Column({ type: 'int', default: 0 })
+  consecutiveFailures: number;
+
+  @Column({ type: 'timestamp', nullable: true })
   cancelledAt: Date | null;
 
   @CreateDateColumn()

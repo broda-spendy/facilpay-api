@@ -4,9 +4,18 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppLogger } from './modules/logger/logger.service';
 import { ValidationPipe, UnprocessableEntityException } from '@nestjs/common';
 import { CorsConfigService } from './modules/cors/cors-config.service';
+import { parseTrustedProxyList } from './modules/merchants/ip-utils';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
+
+  // Only trust X-Forwarded-For when the connecting peer is a known reverse
+  // proxy. When TRUSTED_PROXY_IPS is unset (direct exposure) the header is
+  // never trusted, so req.ip stays the socket peer address.
+  const trustedProxies = parseTrustedProxyList(process.env.TRUSTED_PROXY_IPS);
+  if (trustedProxies.length > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', trustedProxies);
+  }
 
   const corsConfigService = app.get(CorsConfigService);
   app.enableCors(corsConfigService.getCorsOptions());
