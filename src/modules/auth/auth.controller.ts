@@ -592,6 +592,47 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Permissions('manage_roles')
+  @Get('admin/roles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List all roles (Admin only)',
+    description: 'Returns all roles and their permissions. Requires manage_roles permission.',
+  })
+  @ApiOkResponse({
+    description: 'Roles returned successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  async getRoles() {
+    return this.authService.getRoles();
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Get('admin/roles/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get a role by ID (Admin only)',
+    description: 'Returns a single role with its permissions. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiOkResponse({
+    description: 'Role returned successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  async getRoleById(@Param('id') id: string) {
+    return this.authService.getRoleById(id);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
   @Post('admin/roles')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

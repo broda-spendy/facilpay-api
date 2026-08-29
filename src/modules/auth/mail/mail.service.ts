@@ -81,4 +81,43 @@ export class MailService {
       html: `<p>You requested to reset your password.</p><p>Click the link below to reset your password:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>This link expires in 1 hour.</p><p>If you did not request this, please ignore this email.</p>`,
     });
   }
+
+  async sendPasswordChangedEmail(to: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.configService.get<string>(
+        'SMTP_FROM',
+        '"FacilPay" <noreply@facilpay.com>',
+      ),
+      to,
+      subject: 'Your FacilPay password was changed',
+      text: 'Your password was changed successfully. If you did not make this change, contact support immediately.',
+      html: '<p>Your password was changed successfully.</p><p>If you did not make this change, contact support immediately.</p>',
+    });
+  }
+
+  async sendTwoFactorDisabledEmail(to: string): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.configService.get<string>(
+        'SMTP_FROM',
+        '"FacilPay" <noreply@facilpay.com>',
+      ),
+      to,
+      subject: 'Two-factor authentication was disabled on your FacilPay account',
+      text: 'Two-factor authentication has been disabled for your account. If you did not do this, please secure your account immediately.',
+      html: '<p>Two-factor authentication has been disabled for your account.</p><p>If you did not do this, please secure your account immediately.</p>',
+    });
+  }
+
+  async sendAccountLockedEmail(to: string, lockDurationMinutes: number): Promise<void> {
+    await this.transporter.sendMail({
+      from: this.configService.get<string>(
+        'SMTP_FROM',
+        '"FacilPay" <noreply@facilpay.com>',
+      ),
+      to,
+      subject: 'Your FacilPay account has been locked',
+      text: `Your account has been temporarily locked after repeated failed login attempts. It will unlock in ${lockDurationMinutes} minutes. If this was not you, secure your account immediately.`,
+      html: `<p>Your account has been temporarily locked after repeated failed login attempts.</p><p>It will unlock in <strong>${lockDurationMinutes}</strong> minutes.</p><p>If this was not you, secure your account immediately.</p>`,
+    });
+  }
 }

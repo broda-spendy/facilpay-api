@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -20,7 +20,12 @@ export class UsersService {
     private readonly auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
-    this.logger = appLogger.child({ module: UsersService.name });
+    this.logger = appLogger?.child({ module: UsersService.name }) ?? {
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      debug: () => undefined,
+    } as Logger;
   }
 
   async create(
@@ -195,6 +200,12 @@ export class UsersService {
     user.isActive = false;
     user.updatedAt = new Date();
     await this.userRepository.save(user);
+    if (this.refreshTokenRepository) {
+      await this.refreshTokenRepository.update(
+        { userId: id },
+        { revoked: true },
+      );
+    }
     this.logger.info({ userId: id }, 'User soft deleted');
 
     await this.auditLogsService.record({
@@ -280,16 +291,28 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
+    const wasLocked = !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
     user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
     user.updatedAt = new Date();
 
     // Lock account if max attempts reached
-    if (user.failedLoginAttempts >= maxAttempts) {
+    if (user.failedLoginAttempts >= maxAttempts && !wasLocked) {
       user.lockedUntil = new Date(Date.now() + lockDurationMinutes * 60 * 1000);
       this.logger.warn(
         { userId, failedAttempts: user.failedLoginAttempts },
         'Account locked due to failed login attempts',
       );
+
+      if (this.mailService) {
+        try {
+          await this.mailService.sendAccountLockedEmail(user.email, lockDurationMinutes);
+        } catch (error) {
+          this.logger.warn(
+            { userId, email: user.email, error: error.message },
+            'Failed to send account locked email',
+          );
+        }
+      }
     } else {
       this.logger.debug(
         { userId, failedAttempts: user.failedLoginAttempts },

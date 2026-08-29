@@ -8,7 +8,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 @Module({
   imports: [TypeOrmModule.forFeature([User]), AuditLogsModule],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService, MailService],
   exports: [UsersService],
 })
 export class UsersModule {}
