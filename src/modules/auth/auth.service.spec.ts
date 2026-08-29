@@ -3,12 +3,20 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { AppLogger } from '../logger/logger.service';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as otplib from 'otplib';
+import { PasswordStrengthService } from './password-strength.service';
 
 jest.mock('bcrypt');
+
+jest.mock('otplib', () => ({
+  generateSecret: jest.fn(() => 'JBSWY3DPEHPK3PXP'),
+  generateURI: jest.fn(() => 'otpauth://totp/FacilPay:test%40example.com'),
+  verifySync: jest.fn(() => ({ valid: true })),
+}));
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -55,11 +63,14 @@ describe('AuthService', () => {
   const mockManager = {
     findOne: jest.fn(),
     update: jest.fn(),
+    save: jest.fn(),
     getRepository: jest.fn(() => ({ save: jest.fn().mockResolvedValue({}) })),
   };
 
   const mockDataSource = {
-    transaction: jest.fn((cb) => cb(mockManager)),
+    transaction: jest.fn(<T>(cb: (manager: typeof mockManager) => Promise<T>) =>
+      cb(mockManager),
+    ),
   };
 
   beforeEach(async () => {
@@ -97,6 +108,22 @@ describe('AuthService', () => {
         {
           provide: 'PasswordResetTokenRepository',
           useValue: { save: jest.fn().mockResolvedValue({}) },
+        },
+        {
+          provide: PasswordStrengthService,
+          useValue: {
+            validateAndScore: jest
+              .fn()
+              .mockResolvedValue({ score: 3, feedback: [] }),
+          },
+        },
+        {
+          provide: 'RoleRepository',
+          useValue: {
+            findOne: jest.fn(),
+            create: jest.fn(),
+            save: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -284,6 +311,105 @@ describe('AuthService', () => {
 
       expect(usersService.findOne).toHaveBeenCalledWith(userId);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('regenerateBackupCodes', () => {
+    const user = {
+      id: 'user-id-123',
+      email: 'test@example.com',
+      password: 'hashed-password',
+      twoFactorEnabled: true,
+      twoFactorSecret: 'encrypted-secret',
+      backupCodes: ['old-hash-1'],
+    };
+
+    const encryptTwoFactorSecret = (secret: string) =>
+      (
+        service as unknown as {
+          encryptTwoFactorSecret: (secret: string) => string;
+        }
+      ).encryptTwoFactorSecret(secret);
+
+    beforeEach(() => {
+      mockManager.findOne.mockReset();
+      mockManager.save.mockReset();
+      mockManager.findOne.mockResolvedValue(user);
+      mockManager.save.mockResolvedValue(user);
+      (bcrypt.hash as jest.Mock).mockResolvedValue('new-hash');
+    });
+
+    it('should regenerate backup codes when given a valid password', async () => {
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.regenerateBackupCodes('user-id-123', {
+        password: 'P@ssw0rd!',
+      });
+
+      expect(result.backupCodes).toHaveLength(10);
+      const hashedCodes = Array.from({ length: 10 }, () => 'new-hash');
+      expect(mockManager.save).toHaveBeenCalledWith(
+        expect.objectContaining({ backupCodes: hashedCodes }),
+      );
+    });
+
+    it('should regenerate backup codes when given a valid TOTP code', async () => {
+      mockManager.findOne.mockResolvedValue({
+        ...user,
+        twoFactorSecret: encryptTwoFactorSecret('JBSWY3DPEHPK3PXP'),
+      });
+      (otplib.verifySync as jest.Mock).mockReturnValue({ valid: true });
+
+      const result = await service.regenerateBackupCodes('user-id-123', {
+        twoFactorCode: '123456',
+      });
+
+      expect(otplib.verifySync).toHaveBeenCalled();
+      expect(result.backupCodes).toHaveLength(10);
+    });
+
+    it('should throw UnauthorizedException for an invalid password', async () => {
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.regenerateBackupCodes('user-id-123', { password: 'wrong' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException for an invalid TOTP code', async () => {
+      mockManager.findOne.mockResolvedValue({
+        ...user,
+        twoFactorSecret: encryptTwoFactorSecret('JBSWY3DPEHPK3PXP'),
+      });
+      (otplib.verifySync as jest.Mock).mockReturnValue({ valid: false });
+
+      await expect(
+        service.regenerateBackupCodes('user-id-123', {
+          twoFactorCode: '000000',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when neither password nor TOTP code is provided', async () => {
+      await expect(
+        service.regenerateBackupCodes('user-id-123', {}),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when 2FA is not enabled', async () => {
+      mockManager.findOne.mockResolvedValue({
+        ...user,
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+      });
+
+      await expect(
+        service.regenerateBackupCodes('user-id-123', { password: 'P@ssw0rd!' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockManager.save).not.toHaveBeenCalled();
     });
   });
 

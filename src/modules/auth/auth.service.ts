@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -26,7 +27,8 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
-import { authenticator } from 'otplib';
+import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
+import { generateSecret, generateURI, verifySync } from 'otplib';
 import * as qrcode from 'qrcode';
 import { UsersService } from '../users/users.service';
 import { AppLogger } from '../logger/logger.service';
@@ -176,7 +178,7 @@ export class AuthService {
       }
 
       const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
-      const isTotpValid = loginDto.twoFactorCode.length === 6 ? authenticator.verify({ token: loginDto.twoFactorCode, secret }) : false;
+      const isTotpValid = loginDto.twoFactorCode.length === 6 ? verifySync({ token: loginDto.twoFactorCode, secret }).valid : false;
 
       if (!isTotpValid) {
         const isBackupCodeValid = await this.usersService.consumeBackupCode(user.id, loginDto.twoFactorCode);
@@ -204,16 +206,19 @@ export class AuthService {
     userId: string,
   ): Promise<{ secret: string; qrCodeUri: string; otpauthUri: string; backupCodes: string[] }> {
     const user = await this.usersService.findByIdWithSecrets(userId);
-    const secret = authenticator.generateSecret();
+    const secret = generateSecret();
     const encryptedSecret = this.encryptTwoFactorSecret(secret);
 
     await this.usersService.setTwoFactorSecret(user.id, encryptedSecret);
 
-    const otpauthUri = authenticator.keyuri(
-      user.email,
-      this.twoFactorIssuer,
+    const otpauthUri = generateURI({
+      label: user.email,
+      issuer: this.twoFactorIssuer,
       secret,
-    );
+      algorithm: 'sha1',
+      digits: 6,
+      period: 30,
+    });
     const qrCodeUri = await qrcode.toDataURL(otpauthUri);
 
     const plainBackupCodes = Array.from({ length: 10 }, () => randomBytes(4).toString('hex'));
@@ -236,7 +241,7 @@ export class AuthService {
     }
 
     const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
-    const isValid = authenticator.verify({ token: dto.code, secret });
+    const isValid = verifySync({ token: dto.code, secret }).valid;
     if (!isValid) {
       throw new UnauthorizedException('Invalid two-factor code');
     }
@@ -268,6 +273,71 @@ export class AuthService {
       message: 'Two-factor authentication disabled',
       twoFactorEnabled: false,
     };
+  }
+
+  async regenerateBackupCodes(
+    userId: string,
+    dto: RegenerateBackupCodesDto,
+  ): Promise<{ backupCodes: string[] }> {
+    return this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, {
+        where: { id: userId },
+      });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${userId} not found`);
+      }
+
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        throw new BadRequestException(
+          'Two-factor authentication is not enabled',
+        );
+      }
+
+      const hasPassword = dto.password !== undefined && dto.password !== '';
+      const hasTotpCode =
+        dto.twoFactorCode !== undefined && dto.twoFactorCode !== '';
+
+      if (!hasPassword && !hasTotpCode) {
+        throw new BadRequestException(
+          'Password or two-factor code is required',
+        );
+      }
+
+      if (dto.password !== undefined && dto.password !== '') {
+        const isPasswordValid = await bcrypt.compare(
+          dto.password,
+          user.password,
+        );
+        if (!isPasswordValid) {
+          throw new UnauthorizedException('Invalid password');
+        }
+      }
+
+      if (dto.twoFactorCode !== undefined && dto.twoFactorCode !== '') {
+        const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
+        const isTotpValid = verifySync({
+          token: dto.twoFactorCode,
+          secret,
+        }).valid;
+        if (!isTotpValid) {
+          throw new UnauthorizedException('Invalid two-factor code');
+        }
+      }
+
+      const plainBackupCodes = Array.from({ length: 10 }, () =>
+        randomBytes(4).toString('hex'),
+      );
+      const hashedBackupCodes = await Promise.all(
+        plainBackupCodes.map((code) => bcrypt.hash(code, 10)),
+      );
+
+      user.backupCodes = hashedBackupCodes;
+      await manager.save(user);
+
+      this.logger.info({ userId }, 'Two-factor backup codes regenerated');
+
+      return { backupCodes: plainBackupCodes };
+    });
   }
 
   async verifyEmail(token: string): Promise<{ message: string }> {
