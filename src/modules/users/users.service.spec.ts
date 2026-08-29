@@ -5,10 +5,12 @@ import { User } from './user.entity';
 import { AppLogger } from '../logger/logger.service';
 import { NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { UserRole } from '../../common/constants/roles';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
 
 describe('UsersService', () => {
     let service: UsersService;
     let userRepository: any;
+    let refreshTokenRepository: any;
     let appLogger: any;
 
     beforeEach(async () => {
@@ -28,6 +30,10 @@ describe('UsersService', () => {
             })),
         };
 
+        refreshTokenRepository = {
+            update: jest.fn(),
+        };
+
         appLogger = {
             child: jest.fn().mockReturnValue({
                 info: jest.fn(),
@@ -41,6 +47,7 @@ describe('UsersService', () => {
             providers: [
                 UsersService,
                 { provide: getRepositoryToken(User), useValue: userRepository },
+                { provide: getRepositoryToken(RefreshToken), useValue: refreshTokenRepository },
                 { provide: AppLogger, useValue: appLogger },
             ],
         }).compile();

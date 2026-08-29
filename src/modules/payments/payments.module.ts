@@ -44,6 +44,7 @@ import { InvoiceService } from './invoice.service';
       MerchantFeeConfig,
       Dispute,
       RecurringPayment,
+      SettlementAdjustment,
     ]),
     WebhooksModule,
     StellarModule,

@@ -1,4 +1,4 @@
-import {
+﻿import {
   ArgumentsHost,
   Catch,
   HttpException,
@@ -7,6 +7,7 @@ import {
 import { BaseExceptionFilter, HttpAdapterHost } from '@nestjs/core';
 import { Request, Response } from 'express';
 import { Logger } from 'pino';
+import { QueryFailedError } from 'typeorm';
 import { AppLogger } from './logger.service';
 import { extractUserId } from './logging.utils';
 
@@ -23,12 +24,38 @@ export class LoggingExceptionFilter extends BaseExceptionFilter {
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<Request>();
     const response = ctx.getResponse<Response>();
-    const statusCode =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    
+    let statusCode = HttpStatus.INTERNAL_SERVER_ERROR;
+    if (exception instanceof HttpException) {
+      statusCode = exception.getStatus();
+    } else if (exception instanceof QueryFailedError) {
+      statusCode = HttpStatus.BAD_REQUEST;
+    }
 
     this.logException(exception, request, response, statusCode);
+
+    if (exception instanceof QueryFailedError) {
+      const lowerMessage = exception.message.toLowerCase();
+      const isDuplicate = lowerMessage.includes('duplicate');
+      const isConstraint = lowerMessage.includes('constraint');
+
+      let message = 'Database error occurred';
+      if (isDuplicate) {
+        message = 'A resource with this value already exists';
+      } else if (isConstraint) {
+        message = 'Invalid data provided';
+      }
+
+      response.status(HttpStatus.BAD_REQUEST).json({
+        statusCode: HttpStatus.BAD_REQUEST,
+        message,
+        error: 'QueryFailedError',
+        timestamp: new Date().toISOString(),
+        path: request.originalUrl ?? request.url,
+      });
+      return;
+    }
+
     super.catch(exception, host);
   }
 
@@ -52,11 +79,11 @@ export class LoggingExceptionFilter extends BaseExceptionFilter {
     this.logger.error(
       {
         err,
-        requestId: request.requestId,
+        requestId: (request as any).requestId,
         method: request.method,
         path,
         statusCode,
-        userId: extractUserId(request.user),
+        userId: extractUserId((request as any).user),
       },
       'Unhandled exception',
     );

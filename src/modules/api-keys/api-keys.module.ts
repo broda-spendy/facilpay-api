@@ -6,9 +6,10 @@ import { ApiKeyUsage } from './api-key-usage.entity';
 import { ApiKeysService } from './api-keys.service';
 import { ApiKeysController } from './api-keys.controller';
 import { ApiKeyAuthGuard } from './api-key-auth.guard';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ApiKey, ApiKeyUsage]), ConfigModule],
+  imports: [TypeOrmModule.forFeature([ApiKey, ApiKeyUsage]), ConfigModule, AuditLogsModule],
   controllers: [ApiKeysController],
   providers: [ApiKeysService, ApiKeyAuthGuard],
   exports: [ApiKeysService, ApiKeyAuthGuard],
