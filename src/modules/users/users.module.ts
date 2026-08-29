@@ -3,11 +3,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { User } from './user.entity';
-import { RefreshToken } from '../auth/entities/refresh-token.entity';
-import { MailService } from '../auth/mail/mail.service';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, RefreshToken])],
+  imports: [TypeOrmModule.forFeature([User]), AuditLogsModule],
   controllers: [UsersController],
   providers: [UsersService, MailService],
   exports: [UsersService],

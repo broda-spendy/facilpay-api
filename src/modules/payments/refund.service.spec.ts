@@ -34,6 +34,7 @@ describe('PaymentsService - Refunds', () => {
       release: jest.fn(),
       manager: {
         findOneBy: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
         create: jest.fn(),
         save: jest.fn(),
       },
@@ -274,6 +275,53 @@ describe('PaymentsService - Refunds', () => {
       await expect(service.refund('123', { amount: 50 })).rejects.toThrow(
         ConflictException,
       );
+    });
+
+    it('should throw ConflictException when a payment reaches the refund cap', async () => {
+      const payment = {
+        id: '123',
+        amount: 100,
+        refundedAmount: 99,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+      };
+
+      mockQueryRunner.manager.findOneBy.mockResolvedValue(payment);
+      mockQueryRunner.manager.count
+        .mockResolvedValueOnce(20)
+        .mockResolvedValueOnce(20);
+
+      await expect(service.refund('123', { amount: 0.01 })).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(mockQueryRunner.manager.save).not.toHaveBeenCalled();
+    });
+
+    it('should allow a refund when under the refund cap', async () => {
+      const payment = {
+        id: '123',
+        amount: 100,
+        refundedAmount: 0,
+        status: PaymentStatus.COMPLETED,
+      };
+
+      mockQueryRunner.manager.findOneBy.mockResolvedValue(payment);
+      mockQueryRunner.manager.count.mockResolvedValue(19);
+      mockQueryRunner.manager.create.mockReturnValue({
+        paymentId: '123',
+        amount: 1,
+      });
+      mockQueryRunner.manager.save
+        .mockResolvedValueOnce({ id: 'refund-1', amount: 1 })
+        .mockResolvedValueOnce({
+          ...payment,
+          refundedAmount: 1,
+          status: PaymentStatus.PARTIALLY_REFUNDED,
+        });
+
+      const result = await service.refund('123', { amount: 1 });
+
+      expect(result.payment.refundedAmount).toBe(1);
     });
   });
 
