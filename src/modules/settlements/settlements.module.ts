@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
 import { Settlement } from './entities/settlement.entity';
+import { SettlementAdjustment } from './entities/settlement-adjustment.entity';
 import { MerchantSettlementConfig } from './entities/merchant-settlement-config.entity';
 import { SettlementsService } from './settlements.service';
 import { SettlementsController } from './settlements.controller';
@@ -15,7 +16,12 @@ import { MailService } from '../auth/mail/mail.service';
   imports: [
     ConfigModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forFeature([Settlement, MerchantSettlementConfig, Payment]),
+    TypeOrmModule.forFeature([
+      Settlement,
+      SettlementAdjustment,
+      MerchantSettlementConfig,
+      Payment,
+    ]),
     UsersModule,
   ],
   controllers: [SettlementsController, AdminSettlementsController],
