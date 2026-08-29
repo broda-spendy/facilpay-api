@@ -3,7 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { WEBHOOK_EVENT_TYPES, WebhookEventType } from '../entities/webhook-endpoint.entity';
 
 export class CreateWebhookEndpointDto {
-  @IsUrl({}, { message: 'url must be a valid HTTPS URL' })
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { message: 'url must be a valid HTTPS URL' })
   @ApiProperty({
     description: 'HTTPS URL that will receive webhook POST requests',
     example: 'https://merchant.example.com/webhooks',
