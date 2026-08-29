@@ -5,6 +5,7 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -264,6 +265,16 @@ export class AuthService {
     }
 
     await this.usersService.disableTwoFactor(user.id);
+
+    try {
+      await this.mailService.sendTwoFactorDisabledEmail(user.email);
+    } catch (error) {
+      this.logger.warn(
+        { userId: user.id, email: user.email, error: error.message },
+        'Failed to send two-factor disabled email',
+      );
+    }
+
     return {
       message: 'Two-factor authentication disabled',
       twoFactorEnabled: false,
@@ -569,6 +580,15 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
     await this.usersService.updatePassword(user.id, hashedPassword);
 
+    try {
+      await this.mailService.sendPasswordChangedEmail(user.email);
+    } catch (error) {
+      this.logger.warn(
+        { userId: user.id, email: user.email, error: error.message },
+        'Failed to send password changed email',
+      );
+    }
+
     await this.passwordResetTokenRepository.update(
       { tokenHash },
       { used: true },
@@ -585,6 +605,26 @@ export class AuthService {
     );
 
     return { message: 'Password reset successful. Please log in again.' };
+  }
+
+  async getRoles(): Promise<Pick<Role, 'id' | 'name' | 'permissions' | 'description'>[]> {
+    return this.roleRepository.find({
+      select: ['id', 'name', 'permissions', 'description'],
+      order: { name: 'ASC' },
+    });
+  }
+
+  async getRoleById(id: string): Promise<Pick<Role, 'id' | 'name' | 'permissions' | 'description'>> {
+    const role = await this.roleRepository.findOne({
+      where: { id },
+      select: ['id', 'name', 'permissions', 'description'],
+    });
+
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    return role;
   }
 
   async createRole(dto: CreateRoleDto): Promise<Role> {
