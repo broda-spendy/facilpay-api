@@ -54,6 +54,7 @@ Response:
     "paymentId": "123e4567-e89b-12d3-a456-426614174000",
     "amount": "100.00",
     "reason": null,
+    "initiatedBy": "789e0123-e89b-12d3-a456-426614174000",
     "createdAt": "2026-01-26T11:00:00.000Z"
   }
 }
@@ -84,10 +85,13 @@ Response:
     "paymentId": "123e4567-e89b-12d3-a456-426614174000",
     "amount": "50.00",
     "reason": "Partial refund for damaged item",
+    "initiatedBy": "789e0123-e89b-12d3-a456-426614174000",
     "createdAt": "2026-01-26T11:00:00.000Z"
   }
 }
 ```
+
+> **Note:** every refund record includes an `initiatedBy` field that records the authenticated user ID that triggered the refund. It is `null` when the refund was issued without an authenticated actor.
 
 ### Multiple Partial Refunds
 
@@ -127,12 +131,14 @@ Response includes refunds array:
       "id": "refund-1",
       "amount": "30.00",
       "reason": "First refund",
+      "initiatedBy": "789e0123-e89b-12d3-a456-426614174000",
       "createdAt": "2026-01-26T11:00:00.000Z"
     },
     {
       "id": "refund-2",
       "amount": "20.00",
       "reason": "Second refund",
+      "initiatedBy": "789e0123-e89b-12d3-a456-426614174000",
       "createdAt": "2026-01-26T11:05:00.000Z"
     }
   ]
