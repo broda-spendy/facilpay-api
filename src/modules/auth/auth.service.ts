@@ -25,6 +25,7 @@ import { RegisterDto } from '../users/dto/register.dto';
 import { LoginDto } from '../users/dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
 import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
@@ -356,6 +357,53 @@ export class AuthService {
     this.logger.info({ userId: payload.sub }, 'Email verified successfully');
 
     return { message: 'Email verified successfully. You can now log in.' };
+  }
+
+  async resendVerificationEmail(
+    resendVerificationDto: ResendVerificationDto,
+  ): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmail(
+      resendVerificationDto.email,
+    );
+
+    // Return the same generic message whether the account exists and is
+    // unverified or not, to avoid user enumeration (same as forgotPassword).
+    if (!user || user.isEmailVerified) {
+      this.logger.info(
+        { email: resendVerificationDto.email },
+        'Verification resend requested for unverifiable account',
+      );
+      return {
+        message:
+          'If an account with that email exists, a verification link has been sent.',
+      };
+    }
+
+    const verificationToken = this.jwtService.sign(
+      { sub: user.id, email: user.email, purpose: 'email-verification' },
+      { expiresIn: '24h' },
+    );
+
+    try {
+      await this.mailService.sendVerificationEmail(
+        user.email,
+        verificationToken,
+      );
+      this.logger.info(
+        { userId: user.id, email: user.email },
+        'Verification email resent',
+      );
+    } catch (err) {
+      this.logger.error(
+        { userId: user.id, error: err.message },
+        'Failed to resend verification email',
+      );
+    }
+
+    return {
+      message:
+        'If an account with that email exists, a verification link has been sent.',
+    };
   }
 
   async refresh(

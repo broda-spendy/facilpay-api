@@ -19,6 +19,7 @@ import { LoginDto } from '../users/dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { VerifyEmailQueryDto } from './dto/verify-email-query.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
@@ -373,6 +374,38 @@ export class AuthController {
   })
   async verifyEmail(@Query() query: VerifyEmailQueryDto) {
     return this.authService.verifyEmail(query.token);
+  }
+
+  @AuthThrottle()
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend verification email',
+    description:
+      'Issues a new 24-hour verification link for an unverified account. Returns the same generic response regardless of whether the email exists or is already verified, to prevent user enumeration. Rate limited to 5 requests per 15 minutes.',
+  })
+  @ApiBody({ type: ResendVerificationDto })
+  @ApiOkResponse({
+    description: 'Verification email resent (if the account is unverified).',
+    schema: {
+      example: {
+        message:
+          'If an account with that email exists, a verification link has been sent.',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests. Rate limit exceeded.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+      },
+    },
+  })
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    return this.authService.resendVerificationEmail(dto);
   }
 
   @Public()
