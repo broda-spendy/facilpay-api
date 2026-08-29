@@ -1,4 +1,11 @@
-import { IsOptional, IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
+import {
+  IsOptional,
+  IsEmail,
+  IsString,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateUserDto {
@@ -19,6 +26,9 @@ export class UpdateUserDto {
     example: 'jane.new@example.com',
   })
   @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail()
   email?: string;
 }

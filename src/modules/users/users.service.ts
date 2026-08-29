@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -20,21 +26,28 @@ export class UsersService {
     private readonly auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
-    this.logger = appLogger?.child({ module: UsersService.name }) ?? {
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
-      debug: () => undefined,
-    } as Logger;
+    this.logger =
+      appLogger?.child({ module: UsersService.name }) ??
+      ({
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
+      } as Logger);
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 
   async create(
     createUserDto: CreateUserDto,
   ): Promise<Omit<User, 'password' | 'twoFactorSecret'>> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const normalizedEmail = this.normalizeEmail(createUserDto.email);
 
     const user = this.userRepository.create({
-      email: createUserDto.email,
+      email: normalizedEmail,
       password: hashedPassword,
       roles: [UserRole.USER],
       isEmailVerified: false,
@@ -57,8 +70,11 @@ export class UsersService {
     limit?: number;
     sortBy?: string;
     search?: string;
-  }): Promise<import('../../common/interfaces').PaginatedResult<Omit<User, 'password'>>> {
-    const query = this.userRepository.createQueryBuilder('user')
+  }): Promise<
+    import('../../common/interfaces').PaginatedResult<Omit<User, 'password'>>
+  > {
+    const query = this.userRepository
+      .createQueryBuilder('user')
       .where('user.deletedAt IS NULL');
 
     // Filtering by email (partial match)
@@ -69,7 +85,10 @@ export class UsersService {
     }
 
     // Sorting
-    if (params?.sortBy && ['email', 'createdAt', 'updatedAt'].includes(params.sortBy)) {
+    if (
+      params?.sortBy &&
+      ['email', 'createdAt', 'updatedAt'].includes(params.sortBy)
+    ) {
       query.orderBy(`user.${params.sortBy}`, 'ASC');
     }
 
@@ -78,10 +97,7 @@ export class UsersService {
     const limit = Math.min(Math.max(1, params?.limit ?? 20), 100);
     const skip = (page - 1) * limit;
 
-    const [users, total] = await query
-      .skip(skip)
-      .take(limit)
-      .getManyAndCount();
+    const [users, total] = await query.skip(skip).take(limit).getManyAndCount();
 
     const data = users.map(({ password, ...rest }) => rest);
     return { data, total, page, limit };
@@ -102,7 +118,10 @@ export class UsersService {
    * Find a user by ID with authorization check.
    * Users can only view their own profile unless they are an admin.
    */
-  async findOneWithAuth(id: string, requestingUser: User): Promise<Omit<User, 'password'>> {
+  async findOneWithAuth(
+    id: string,
+    requestingUser: User,
+  ): Promise<Omit<User, 'password'>> {
     // Check if user is admin or viewing their own profile
     const isAdmin = requestingUser.roles.includes(UserRole.ADMIN);
     const isOwnProfile = requestingUser.id === id;
@@ -116,7 +135,7 @@ export class UsersService {
 
   async findByEmail(email: string): Promise<User | undefined> {
     return await this.userRepository.findOne({
-      where: { email, deletedAt: null },
+      where: { email: this.normalizeEmail(email), deletedAt: null },
     });
   }
 
@@ -142,16 +161,21 @@ export class UsersService {
     }
 
     // Check if email is being changed and if it's already taken
-    if (updateUserDto.email && updateUserDto.email !== user.email) {
-      const existingUser = await this.userRepository.findOne({
-        where: { email: updateUserDto.email, deletedAt: null },
-      });
-      if (existingUser) {
-        throw new ConflictException('Email is already taken by another account');
+    if (updateUserDto.email) {
+      const normalizedNewEmail = this.normalizeEmail(updateUserDto.email);
+      if (normalizedNewEmail !== user.email) {
+        const existingUser = await this.userRepository.findOne({
+          where: { email: normalizedNewEmail, deletedAt: null },
+        });
+        if (existingUser) {
+          throw new ConflictException(
+            'Email is already taken by another account',
+          );
+        }
+        // Reset email verification if email is changed
+        user.email = normalizedNewEmail;
+        user.isEmailVerified = false;
       }
-      // Reset email verification if email is changed
-      user.email = updateUserDto.email;
-      user.isEmailVerified = false;
     }
 
     if (updateUserDto.name) {
@@ -189,7 +213,12 @@ export class UsersService {
     return this.update(id, updateUserDto);
   }
 
-  async softDelete(id: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<void> {
+  async softDelete(
+    id: string,
+    actorId?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<void> {
     const user = await this.userRepository.findOne({
       where: { id, deletedAt: null },
     });
@@ -261,7 +290,10 @@ export class UsersService {
   async updateProfile(
     id: string,
     updateUserDto: UpdateUserDto,
-  ): Promise<{ user: Omit<User, 'password'>; emailVerificationRequired: boolean }> {
+  ): Promise<{
+    user: Omit<User, 'password'>;
+    emailVerificationRequired: boolean;
+  }> {
     const updatedUser = await this.update(id, updateUserDto);
     const emailVerificationRequired = updateUserDto.email ? true : false;
     return { user: updatedUser, emailVerificationRequired };
@@ -291,7 +323,8 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    const wasLocked = !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
+    const wasLocked =
+      !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
     user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
     user.updatedAt = new Date();
 
@@ -305,7 +338,10 @@ export class UsersService {
 
       if (this.mailService) {
         try {
-          await this.mailService.sendAccountLockedEmail(user.email, lockDurationMinutes);
+          await this.mailService.sendAccountLockedEmail(
+            user.email,
+            lockDurationMinutes,
+          );
         } catch (error) {
           this.logger.warn(
             { userId, email: user.email, error: error.message },
@@ -376,7 +412,9 @@ export class UsersService {
 
     const now = new Date();
     const unlockTime = new Date(user.lockedUntil);
-    const secondsRemaining = Math.ceil((unlockTime.getTime() - now.getTime()) / 1000);
+    const secondsRemaining = Math.ceil(
+      (unlockTime.getTime() - now.getTime()) / 1000,
+    );
 
     return Math.max(0, secondsRemaining);
   }
@@ -384,7 +422,12 @@ export class UsersService {
   /**
    * Manually unlock an account (admin only)
    */
-  async unlockAccount(userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<Omit<User, 'password'>> {
+  async unlockAccount(
+    userId: string,
+    actorId?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<Omit<User, 'password'>> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`User with ID ${userId} not found`);
@@ -438,7 +481,10 @@ export class UsersService {
     await this.userRepository.save(user);
   }
 
-  async updateBackupCodes(userId: string, backupCodes: string[]): Promise<void> {
+  async updateBackupCodes(
+    userId: string,
+    backupCodes: string[],
+  ): Promise<void> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
     user.backupCodes = backupCodes;
@@ -447,7 +493,8 @@ export class UsersService {
 
   async consumeBackupCode(userId: string, code: string): Promise<boolean> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user || !user.backupCodes || user.backupCodes.length === 0) return false;
+    if (!user || !user.backupCodes || user.backupCodes.length === 0)
+      return false;
 
     // Check if code matches any hashed backup code
     for (let i = 0; i < user.backupCodes.length; i++) {
