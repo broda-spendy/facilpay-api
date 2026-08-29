@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Request,
@@ -19,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import { CreateRecurringPaymentDto } from './dto/create-recurring-payment.dto';
+import { UpdateRecurringPaymentDto } from './dto/update-recurring-payment.dto';
 import { RecurringPayment } from './recurring-payment.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -62,6 +64,24 @@ export class RecurringPaymentsController {
   @ApiNotFoundResponse({ description: 'Plan not found.' })
   findOne(@Param('id') id: string, @Request() req: any) {
     return this.service.findOne(id, req.user.id);
+  }
+
+  @Patch(':id')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Update a recurring payment plan',
+    description:
+      'Updates amount, interval, and/or description on a plan owned by the caller. Changes apply to future scheduled runs only; already-created payments are unaffected.',
+  })
+  @ApiParam({ name: 'id', description: 'Recurring payment plan UUID' })
+  @ApiOkResponse({ description: 'Plan updated.', type: RecurringPayment })
+  @ApiNotFoundResponse({ description: 'Plan not found.' })
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateRecurringPaymentDto,
+    @Request() req: any,
+  ) {
+    return this.service.update(id, req.user.id, dto);
   }
 
   @Post(':id/pause')

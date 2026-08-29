@@ -30,6 +30,7 @@ import { RecurringPayment } from './recurring-payment.entity';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import { RecurringPaymentsController } from './recurring-payments.controller';
 import { MerchantFeesController } from './merchant-fees.controller';
+import { SettlementAdjustment } from '../settlements/entities/settlement-adjustment.entity';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { MerchantFeesController } from './merchant-fees.controller';
       MerchantFeeConfig,
       Dispute,
       RecurringPayment,
+      SettlementAdjustment,
     ]),
     WebhooksModule,
     StellarModule,

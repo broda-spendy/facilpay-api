@@ -38,6 +38,7 @@ import { EmailNotificationService } from '../notifications/email-notification.se
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { StellarService } from '../stellar/stellar.service';
 import { UsersService } from '../users/users.service';
+import { SettlementAdjustment } from '../settlements/entities/settlement-adjustment.entity';
 
 const DEFAULT_PAYMENT_EXPIRY_SECONDS = 1800;
 
@@ -56,6 +57,8 @@ export class PaymentsService {
     private readonly paymentSplitRepository: Repository<PaymentSplit>,
     @InjectRepository(Dispute)
     private readonly disputeRepository: Repository<Dispute>,
+    @InjectRepository(SettlementAdjustment)
+    private readonly settlementAdjustmentRepository: Repository<SettlementAdjustment>,
     private readonly dataSource: DataSource,
     appLogger: AppLogger,
     private readonly paymentSseService: PaymentSseService,
@@ -816,6 +819,23 @@ export class PaymentsService {
       }
 
       const updatedPayment = await queryRunner.manager.save(payment);
+
+      if (payment.settlementId) {
+        // settlementId is only ever stamped onto payments that have a merchantId
+        // (settlement processing groups by merchantId), so it is non-null here.
+        const adjustment = queryRunner.manager.create(SettlementAdjustment, {
+          settlementId: payment.settlementId,
+          refundId: savedRefund.id,
+          paymentId: payment.id,
+          merchantId: payment.merchantId as string,
+          amount: -refundAmount,
+          currency: payment.currency,
+        });
+        await queryRunner.manager.save(adjustment);
+        this.logger.info(
+          `Settlement adjustment recorded: settlement ${payment.settlementId} for refund ${savedRefund.id}, amount: ${-refundAmount}`,
+        );
+      }
 
       await queryRunner.commitTransaction();
       this.logger.info(

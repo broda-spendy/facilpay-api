@@ -1,0 +1,47 @@
+import {
+  IsNumber,
+  IsString,
+  IsOptional,
+  IsEnum,
+  Min,
+  MaxLength,
+  IsPositive,
+} from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { RecurringPaymentInterval } from '../recurring-payment.entity';
+
+export class UpdateRecurringPaymentDto {
+  @IsNumber()
+  @IsOptional()
+  @IsPositive({ message: 'Amount must be a positive number' })
+  @Min(0.01, { message: 'Amount must be at least 0.01' })
+  @ApiPropertyOptional({
+    description: 'New amount to charge on future scheduled runs',
+    example: 34.99,
+    minimum: 0.01,
+  })
+  amount?: number;
+
+  @IsEnum(RecurringPaymentInterval, {
+    message:
+      'interval must be one of: ' +
+      Object.values(RecurringPaymentInterval).join(', '),
+  })
+  @IsOptional()
+  @ApiPropertyOptional({
+    enum: RecurringPaymentInterval,
+    description: 'New interval applied starting from the next scheduled run',
+    example: RecurringPaymentInterval.MONTHLY,
+  })
+  interval?: RecurringPaymentInterval;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500, { message: 'Description must not exceed 500 characters' })
+  @ApiPropertyOptional({
+    description: 'New description applied to future generated payments',
+    example: 'Monthly subscription (updated)',
+    maxLength: 500,
+  })
+  description?: string;
+}
