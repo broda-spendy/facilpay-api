@@ -82,6 +82,14 @@ export class Payment {
   @Column({ nullable: true })
   settlementId: string | null = null;
 
+  /**
+   * Unique shareable token used to access the invoice PDF without authentication.
+   * Generated on first invoice request and stored here for subsequent access.
+   */
+  @Index({ unique: true, where: '"invoiceToken" IS NOT NULL' })
+  @Column({ nullable: true, unique: true })
+  invoiceToken: string | null = null;
+
   @CreateDateColumn()
   createdAt: Date;
 

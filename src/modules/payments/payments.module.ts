@@ -30,6 +30,7 @@ import { RecurringPayment } from './recurring-payment.entity';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import { RecurringPaymentsController } from './recurring-payments.controller';
 import { MerchantFeesController } from './merchant-fees.controller';
+import { InvoiceService } from './invoice.service';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { MerchantFeesController } from './merchant-fees.controller';
     CurrencyConfigService,
     PaymentSseService,
     RecurringPaymentsService,
+    InvoiceService,
   ],
   exports: [
     PaymentsService,
