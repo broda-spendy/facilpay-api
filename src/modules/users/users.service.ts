@@ -8,6 +8,7 @@ import { UserRole } from '../../common/constants/roles';
 import * as bcrypt from 'bcrypt';
 import { AppLogger } from '../logger/logger.service';
 import { Logger } from 'pino';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 @Injectable()
 export class UsersService {
@@ -16,6 +17,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child({ module: UsersService.name });
@@ -182,7 +184,7 @@ export class UsersService {
     return this.update(id, updateUserDto);
   }
 
-  async softDelete(id: string): Promise<void> {
+  async softDelete(id: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<void> {
     const user = await this.userRepository.findOne({
       where: { id, deletedAt: null },
     });
@@ -194,6 +196,17 @@ export class UsersService {
     user.updatedAt = new Date();
     await this.userRepository.save(user);
     this.logger.info({ userId: id }, 'User soft deleted');
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? null,
+      actorType: actorId ? 'user' : 'system',
+      action: 'user.deleted',
+      resourceType: 'user',
+      resourceId: id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
   }
 
   async remove(id: string): Promise<void> {
@@ -348,7 +361,7 @@ export class UsersService {
   /**
    * Manually unlock an account (admin only)
    */
-  async unlockAccount(userId: string): Promise<Omit<User, 'password'>> {
+  async unlockAccount(userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<Omit<User, 'password'>> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException(`User with ID ${userId} not found`);
@@ -360,6 +373,17 @@ export class UsersService {
 
     const savedUser = await this.userRepository.save(user);
     this.logger.info({ userId }, 'Account unlocked by admin');
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? null,
+      actorType: actorId ? 'user' : 'system',
+      action: 'user.unlocked',
+      resourceType: 'user',
+      resourceId: userId,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
 
     const { password, ...result } = savedUser;
     return result;

@@ -10,8 +10,9 @@ import {
   HttpStatus,
   Res,
   UseGuards,
+  Req,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from '../users/dto/register.dto';
@@ -193,8 +194,13 @@ export class AuthController {
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
+    @Req() req: Request,
   ) {
-    const result = await this.authService.login(loginDto);
+    const result = await this.authService.login(
+      loginDto,
+      req.ip,
+      req.headers['user-agent'],
+    );
     if (result['2fa_required']) {
       res.status(HttpStatus.ACCEPTED);
     }
@@ -224,8 +230,8 @@ export class AuthController {
   @ApiUnauthorizedResponse({
     description: 'Missing or invalid bearer token.',
   })
-  async enableTwoFactor(@CurrentUser() user: User) {
-    return this.authService.enableTwoFactor(user.id);
+  async enableTwoFactor(@CurrentUser() user: User, @Req() req: Request) {
+    return this.authService.enableTwoFactor(user.id, req.ip, req.headers['user-agent']);
   }
 
   @Post('2fa/verify')
@@ -262,8 +268,9 @@ export class AuthController {
   async verifyTwoFactor(
     @CurrentUser() user: User,
     @Body() dto: TwoFactorCodeDto,
+    @Req() req: Request,
   ) {
-    return this.authService.verifyTwoFactor(user.id, dto);
+    return this.authService.verifyTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
   @Post('2fa/disable')
@@ -300,8 +307,9 @@ export class AuthController {
   async disableTwoFactor(
     @CurrentUser() user: User,
     @Body() dto: DisableTwoFactorDto,
+    @Req() req: Request,
   ) {
-    return this.authService.disableTwoFactor(user.id, dto);
+    return this.authService.disableTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
   @Public()
@@ -411,8 +419,8 @@ export class AuthController {
       },
     },
   })
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(dto);
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.authService.forgotPassword(dto, req.ip, req.headers['user-agent']);
   }
 
   @AuthThrottle()
@@ -452,8 +460,8 @@ export class AuthController {
       },
     },
   })
-  async resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto);
+  async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
+    return this.authService.resetPassword(dto, req.ip, req.headers['user-agent']);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -506,8 +514,8 @@ export class AuthController {
       },
     },
   })
-  async unlockAccount(@Param('userId') userId: string) {
-    return this.usersService.unlockAccount(userId);
+  async unlockAccount(@Param('userId') userId: string, @CurrentUser() user: User, @Req() req: Request) {
+    return this.usersService.unlockAccount(userId, user.id, req.ip, req.headers['user-agent']);
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -545,7 +553,7 @@ export class AuthController {
   @ApiForbiddenResponse({
     description: 'Insufficient permissions.',
   })
-  async assignRole(@Param('id') userId: string, @Body() dto: AssignRoleDto) {
-    return this.authService.assignRole(userId, dto.roleId);
+  async assignRole(@Param('id') userId: string, @Body() dto: AssignRoleDto, @CurrentUser() user: User, @Req() req: Request) {
+    return this.authService.assignRole(userId, dto.roleId, user.id, req.ip, req.headers['user-agent']);
   }
 }

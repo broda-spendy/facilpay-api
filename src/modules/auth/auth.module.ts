@@ -16,6 +16,7 @@ import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Role } from './entities/role.entity';
 import { MailService } from './mail/mail.service';
 import { PasswordStrengthService } from './password-strength.service';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { PasswordStrengthService } from './password-strength.service';
     PassportModule,
     HttpModule,
     TypeOrmModule.forFeature([RefreshToken, PasswordResetToken, Role]),
+    AuditLogsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
