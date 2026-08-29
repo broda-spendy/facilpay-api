@@ -1,11 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { getQueueToken } from '@nestjs/bullmq';
+import { validate, ValidationError } from 'class-validator';
 import { WebhooksService } from './webhooks.service';
 import { WebhookEndpoint } from './entities/webhook-endpoint.entity';
 import { WebhookDelivery, WebhookDeliveryStatus } from './entities/webhook-delivery.entity';
 import { AppLogger } from '../logger/logger.service';
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
+import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 
 describe('WebhooksService', () => {
     let service: WebhooksService;
@@ -57,6 +59,37 @@ describe('WebhooksService', () => {
 
     it('should be defined', () => {
         expect(service).toBeDefined();
+    });
+
+    describe('CreateWebhookEndpointDto validation', () => {
+        it('rejects http webhook URLs and protocol-less values', async () => {
+            const invalidPayloads = [
+                { url: 'http://merchant.example.com/webhooks', events: ['payment.created'] },
+                { url: 'merchant.example.com/webhooks', events: ['payment.created'] },
+            ];
+
+            for (const payload of invalidPayloads) {
+                const dto = Object.assign(new CreateWebhookEndpointDto(), payload);
+                const errors: ValidationError[] = await validate(dto);
+
+                expect(errors).toEqual(
+                    expect.arrayContaining([
+                        expect.objectContaining({ property: 'url' }),
+                    ]),
+                );
+            }
+        });
+
+        it('accepts secure https webhook URLs', async () => {
+            const dto = Object.assign(new CreateWebhookEndpointDto(), {
+                url: 'https://merchant.example.com/webhooks',
+                events: ['payment.created'],
+            });
+
+            const errors = await validate(dto);
+
+            expect(errors).toHaveLength(0);
+        });
     });
 
     describe('retryFailedDelivery', () => {

@@ -105,6 +105,7 @@ export class PaymentsService {
       .select('COALESCE(SUM(payment.amount), 0)', 'sum')
       .where('payment.createdAt >= :start', { start })
       .andWhere('payment.createdAt <= :end', { end })
+      .andWhere('payment.currency = :currency', { currency: dto.currency })
       .andWhere(
         '(payment.payerEmail = :userKey OR payment.merchantEmail = :userKey OR payment.merchantId = :userKey)',
         { userKey },

@@ -10,6 +10,7 @@ describe('RecurringPaymentsService', () => {
   let mockRepository: any;
   let mockPaymentsService: any;
   let mockIdempotencyService: any;
+  let mockWebhooksService: any;
   let mockAppLogger: any;
 
   beforeEach(() => {
@@ -29,14 +30,19 @@ describe('RecurringPaymentsService', () => {
       storeKey: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockWebhooksService = {
+      dispatchEventToMerchant: jest.fn().mockResolvedValue(undefined),
+    };
+
     mockAppLogger = {
-      child: jest.fn().mockReturnValue({ info: jest.fn(), error: jest.fn() }),
+      child: jest.fn().mockReturnValue({ info: jest.fn(), error: jest.fn(), warn: jest.fn() }),
     };
 
     service = new RecurringPaymentsService(
       mockRepository,
       mockPaymentsService,
       mockIdempotencyService,
+      mockWebhooksService,
       mockAppLogger,
     );
   });
@@ -155,6 +161,22 @@ describe('RecurringPaymentsService', () => {
     });
   });
 
+  describe('create', () => {
+    it('rejects endAt values in the past', async () => {
+      await expect(
+        service.create(
+          {
+            amount: 29.99,
+            currency: 'USD',
+            interval: RecurringPaymentInterval.MONTHLY,
+            endAt: new Date(Date.now() - 1000).toISOString(),
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow('endAt must be in the future');
+    });
+  });
+
   describe('processDuePlans', () => {
     it('creates a payment for each due plan and advances nextRunAt', async () => {
       const dueAt = new Date('2026-07-01T00:00:00.000Z');
@@ -207,7 +229,7 @@ describe('RecurringPaymentsService', () => {
       expect(plan.lastRunAt).toEqual(dueAt);
     });
 
-    it('logs and continues when a charge fails, leaving the plan due for retry', async () => {
+    it('auto-pauses the plan after the configured number of consecutive failures', async () => {
       const dueAt = new Date('2026-07-01T00:00:00.000Z');
       const plan = {
         id: 'plan-1',
@@ -216,14 +238,38 @@ describe('RecurringPaymentsService', () => {
         interval: RecurringPaymentInterval.DAILY,
         status: RecurringPaymentStatus.ACTIVE,
         nextRunAt: dueAt,
+        consecutiveFailures: 2,
       };
       mockRepository.find.mockResolvedValue([plan]);
       mockPaymentsService.create.mockRejectedValue(new Error('boom'));
 
       await service.processDuePlans();
 
-      expect(plan.nextRunAt).toBe(dueAt);
-      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(plan.consecutiveFailures).toBe(3);
+      expect(plan.status).toBe(RecurringPaymentStatus.PAUSED);
+      expect(mockPaymentsService.create).toHaveBeenCalledTimes(1);
+      expect(mockRepository.save).toHaveBeenCalledWith(plan);
+    });
+
+    it('auto-cancels a plan when maxOccurrences is reached and does not process a 13th charge', async () => {
+      const dueAt = new Date('2026-07-01T00:00:00.000Z');
+      const plan = {
+        id: 'plan-1',
+        amount: 20,
+        currency: 'USD',
+        interval: RecurringPaymentInterval.DAILY,
+        status: RecurringPaymentStatus.ACTIVE,
+        nextRunAt: dueAt,
+        occurrences: 12,
+        maxOccurrences: 12,
+      };
+      mockRepository.find.mockResolvedValue([plan]);
+
+      await service.processDuePlans();
+
+      expect(plan.occurrences).toBe(13);
+      expect(plan.status).toBe(RecurringPaymentStatus.CANCELLED);
+      expect(mockPaymentsService.create).toHaveBeenCalledTimes(1);
     });
   });
 });

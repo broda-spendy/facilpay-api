@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThanOrEqual, Repository } from 'typeorm';
@@ -16,25 +17,36 @@ import { PaymentsService } from './payments.service';
 import { IdempotencyService } from './idempotency.service';
 import { AppLogger } from '../logger/logger.service';
 import { Logger } from 'pino';
+import { WebhooksService } from '../webhooks/webhooks.service';
 
 @Injectable()
 export class RecurringPaymentsService {
   private readonly logger: Logger;
+  private readonly autoPauseFailureThreshold: number;
 
   constructor(
     @InjectRepository(RecurringPayment)
     private readonly recurringPaymentRepository: Repository<RecurringPayment>,
     private readonly paymentsService: PaymentsService,
     private readonly idempotencyService: IdempotencyService,
+    private readonly webhooksService: WebhooksService,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child({ module: RecurringPaymentsService.name });
+    this.autoPauseFailureThreshold = Number(
+      process.env.RECURRING_PAYMENT_AUTO_PAUSE_FAILURES ?? 3,
+    );
   }
 
   async create(
     dto: CreateRecurringPaymentDto,
     createdBy: string,
   ): Promise<RecurringPayment> {
+    if (dto.endAt && new Date(dto.endAt).getTime() <= Date.now()) {
+      throw new BadRequestException('endAt must be in the future');
+    }
+
+    const nextRunAt = dto.startAt ? new Date(dto.startAt) : new Date();
     const plan = this.recurringPaymentRepository.create({
       amount: dto.amount,
       currency: dto.currency,
@@ -47,7 +59,11 @@ export class RecurringPaymentsService {
       metadata: dto.metadata ?? null,
       createdBy,
       status: RecurringPaymentStatus.ACTIVE,
-      nextRunAt: dto.startAt ? new Date(dto.startAt) : new Date(),
+      endAt: dto.endAt ? new Date(dto.endAt) : null,
+      maxOccurrences: dto.maxOccurrences ?? null,
+      occurrences: 0,
+      consecutiveFailures: 0,
+      nextRunAt,
     });
 
     return this.recurringPaymentRepository.save(plan);
@@ -180,12 +196,79 @@ export class RecurringPaymentsService {
       }
 
       plan.lastRunAt = scheduledFor;
-      plan.nextRunAt = this.computeNextRunAt(plan.interval, scheduledFor);
+      plan.occurrences = (plan.occurrences ?? 0) + 1;
+      const nextRunAt = this.computeNextRunAt(plan.interval, scheduledFor);
+
+      if (plan.maxOccurrences !== null && plan.occurrences >= plan.maxOccurrences) {
+        plan.status = RecurringPaymentStatus.CANCELLED;
+        plan.cancelledAt = new Date();
+        plan.nextRunAt = nextRunAt;
+        await this.recurringPaymentRepository.save(plan);
+        return;
+      }
+
+      if (plan.endAt && nextRunAt.getTime() > plan.endAt.getTime()) {
+        plan.status = RecurringPaymentStatus.CANCELLED;
+        plan.cancelledAt = new Date();
+        plan.nextRunAt = nextRunAt;
+        await this.recurringPaymentRepository.save(plan);
+        return;
+      }
+
+      plan.nextRunAt = nextRunAt;
+      plan.consecutiveFailures = 0;
       await this.recurringPaymentRepository.save(plan);
     } catch (error) {
+      const consecutiveFailures = (plan.consecutiveFailures ?? 0) + 1;
+      plan.consecutiveFailures = consecutiveFailures;
+
       this.logger.error(
-        { planId: plan.id, error: error instanceof Error ? error.message : error },
+        {
+          planId: plan.id,
+          consecutiveFailures,
+          error: error instanceof Error ? error.message : error,
+        },
         'Recurring payment charge failed',
+      );
+
+      if (consecutiveFailures >= this.autoPauseFailureThreshold) {
+        plan.status = RecurringPaymentStatus.PAUSED;
+        this.logger.warn(
+          {
+            planId: plan.id,
+            consecutiveFailures,
+            threshold: this.autoPauseFailureThreshold,
+          },
+          'Recurring payment plan auto-paused after repeated failures',
+        );
+        await this.notifyPlanPaused(plan);
+      }
+
+      await this.recurringPaymentRepository.save(plan);
+    }
+  }
+
+  private async notifyPlanPaused(plan: RecurringPayment): Promise<void> {
+    if (!plan.merchantId) {
+      return;
+    }
+
+    try {
+      await this.webhooksService.dispatchEventToMerchant(plan.merchantId, 'recurring_payment.paused', {
+        planId: plan.id,
+        amount: plan.amount,
+        currency: plan.currency,
+        consecutiveFailures: plan.consecutiveFailures,
+        status: plan.status,
+      });
+    } catch (error) {
+      this.logger.error(
+        {
+          planId: plan.id,
+          merchantId: plan.merchantId,
+          error: error instanceof Error ? error.message : error,
+        },
+        'Recurring payment pause notification failed',
       );
     }
   }

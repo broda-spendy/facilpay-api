@@ -111,4 +111,24 @@ export class CreateRecurringPaymentDto {
     example: '2026-08-01T00:00:00Z',
   })
   startAt?: string;
+
+  @IsISO8601({}, { message: 'endAt must be a valid ISO 8601 date' })
+  @IsOptional()
+  @ApiPropertyOptional({
+    description:
+      'Optional cutoff date for the recurring plan. The plan auto-cancels once its next run would exceed this timestamp.',
+    example: '2027-08-01T00:00:00Z',
+  })
+  endAt?: string;
+
+  @IsNumber({}, { message: 'maxOccurrences must be a number' })
+  @IsOptional()
+  @Min(1, { message: 'maxOccurrences must be at least 1' })
+  @ApiPropertyOptional({
+    description:
+      'Maximum number of successful charges allowed before the plan auto-cancels.',
+    example: 12,
+    minimum: 1,
+  })
+  maxOccurrences?: number;
 }
