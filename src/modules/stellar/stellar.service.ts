@@ -266,30 +266,36 @@ export class StellarService {
       where: { merchantId, isAccepted: true },
     });
 
-    const balances = [];
-    for (const asset of assets) {
-      try {
-        const account = await this.server.loadAccount(this.sourceKeypair.publicKey());
-        const balance = account.balances.find(
-          (b: any) => b.asset_code === asset.assetCode && b.asset_issuer === asset.assetIssuer,
-        );
+    if (assets.length === 0) {
+      return [];
+    }
 
-        balances.push({
-          assetCode: asset.assetCode,
-          assetIssuer: asset.assetIssuer,
-          balance: balance ? balance.balance : '0',
-        });
-      } catch (error) {
-        this.logger.error(`Failed to fetch balance for ${asset.assetCode}`, error);
-        balances.push({
+    let account: StellarSdk.Horizon.AccountResponse | undefined;
+    try {
+      account = await this.server.loadAccount(this.sourceKeypair.publicKey());
+    } catch (error) {
+      this.logger.error('Failed to load Stellar account for balances', error);
+    }
+
+    return assets.map((asset) => {
+      if (!account) {
+        return {
           assetCode: asset.assetCode,
           assetIssuer: asset.assetIssuer,
           balance: '0',
           error: 'Failed to fetch balance',
-        });
+        };
       }
-    }
 
-    return balances;
+      const balance = account.balances.find(
+        (b: any) => b.asset_code === asset.assetCode && b.asset_issuer === asset.assetIssuer,
+      );
+
+      return {
+        assetCode: asset.assetCode,
+        assetIssuer: asset.assetIssuer,
+        balance: balance ? balance.balance : '0',
+      };
+    });
   }
 }

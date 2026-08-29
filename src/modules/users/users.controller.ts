@@ -8,7 +8,9 @@ import {
   Delete,
   UseGuards,
   Request,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { UsersService } from './users.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/interfaces';
@@ -329,11 +331,12 @@ export class UsersController {
       example: {
         statusCode: 403,
         message: 'Forbidden',
+        error: 'Forbidden',
       },
     },
   })
-  remove(@Param('id') id: string) {
-    return this.usersService.softDelete(id);
+  remove(@Param('id') id: string, @CurrentUser() user: User, @Req() req: Request) {
+    return this.usersService.softDelete(id, user.id, req.ip, req.headers['user-agent']);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -346,8 +349,8 @@ export class UsersController {
   @ApiNoContentResponse({
     description: 'Account deleted successfully.',
   })
-  async deleteSelf(@Request() req: any) {
-    await this.usersService.softDelete(req.user.id);
+  async deleteSelf(@Req() req: Request) {
+    await this.usersService.softDelete(req.user.id, req.user.id, req.ip, req.headers['user-agent']);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -384,10 +387,11 @@ export class UsersController {
       example: {
         statusCode: 403,
         message: 'Forbidden',
+        error: 'Forbidden',
       },
     },
   })
-  async restore(@Param('id') id: string) {
+  async restore(@Param('id') id: string, @CurrentUser() user: User, @Req() req: Request) {
     return this.usersService.restore(id);
   }
 

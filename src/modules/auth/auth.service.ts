@@ -3,8 +3,10 @@ import {
   UnauthorizedException,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
   HttpException,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -24,9 +26,11 @@ import { RegisterDto } from '../users/dto/register.dto';
 import { LoginDto } from '../users/dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
-import { authenticator } from 'otplib';
+import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
+import { generateSecret, generateURI, verifySync } from 'otplib';
 import * as qrcode from 'qrcode';
 import { UsersService } from '../users/users.service';
 import { AppLogger } from '../logger/logger.service';
@@ -34,6 +38,7 @@ import { Logger } from 'pino';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Role } from './entities/role.entity';
+import { AuditLogsService, RecordAuditLogParams } from '../audit-logs/audit-logs.service';
 import { MailService } from './mail/mail.service';
 import { PasswordStrengthService } from './password-strength.service';
 import { CreateRoleDto } from './dto/create-role.dto';
@@ -64,7 +69,9 @@ export class AuthService {
     private passwordResetTokenRepository: Repository<PasswordResetToken>,
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
-    private sessionsService: SessionsService,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    private auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child({ module: AuthService.name });
@@ -112,7 +119,8 @@ export class AuthService {
 
   async login(
     loginDto: LoginDto,
-    sessionMeta?: SessionMetadata,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{
     access_token?: string;
     refresh_token?: string;
@@ -122,10 +130,19 @@ export class AuthService {
   }> {
     const user = await this.usersService.findByEmail(loginDto.email);
     if (!user) {
+      await this.auditLogsService.record({
+        actorId: null,
+        actorType: 'user',
+        action: 'auth.login.failed',
+        resourceType: 'user',
+        resourceId: null,
+        ipAddress,
+        userAgent,
+        metadata: { email: loginDto.email, reason: 'user_not_found' },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Check if account is locked
     if (this.usersService.isAccountLocked(user)) {
       const secondsUntilUnlock = this.usersService.getSecondsUntilUnlock(user);
       const error: any = new HttpException(
@@ -156,12 +173,21 @@ export class AuthService {
       user.password,
     );
     if (!isPasswordValid) {
-      // Increment failed login attempts
       await this.usersService.incrementFailedLoginAttempts(
         user.id,
         this.maxFailedAttempts,
         this.lockDurationMinutes,
       );
+      await this.auditLogsService.record({
+        actorId: user.id,
+        actorType: 'user',
+        action: 'auth.login.failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        ipAddress,
+        userAgent,
+        metadata: { email: user.email, reason: 'invalid_password' },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -171,8 +197,8 @@ export class AuthService {
       );
     }
 
-    // Reset failed login attempts on successful login
     await this.usersService.resetFailedLoginAttempts(user.id);
+
     if (user.twoFactorEnabled) {
       if (!loginDto.twoFactorCode) {
         return {
@@ -186,11 +212,21 @@ export class AuthService {
       }
 
       const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
-      const isTotpValid = loginDto.twoFactorCode.length === 6 ? authenticator.verify({ token: loginDto.twoFactorCode, secret }) : false;
+      const isTotpValid = loginDto.twoFactorCode.length === 6 ? verifySync({ token: loginDto.twoFactorCode, secret }).valid : false;
 
       if (!isTotpValid) {
         const isBackupCodeValid = await this.usersService.consumeBackupCode(user.id, loginDto.twoFactorCode);
         if (!isBackupCodeValid) {
+          await this.auditLogsService.record({
+            actorId: user.id,
+            actorType: 'user',
+            action: 'auth.login.failed',
+            resourceType: 'user',
+            resourceId: user.id,
+            ipAddress,
+            userAgent,
+            metadata: { email: user.email, reason: 'invalid_2fa' },
+          });
           throw new UnauthorizedException('Invalid two-factor code');
         }
       }
@@ -213,23 +249,40 @@ export class AuthService {
       { userId: user.id, email: user.email },
       'User login successful',
     );
+
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.login.success',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return { access_token, refresh_token, user: userWithoutPassword };
   }
 
   async enableTwoFactor(
     userId: string,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ secret: string; qrCodeUri: string; otpauthUri: string; backupCodes: string[] }> {
     const user = await this.usersService.findByIdWithSecrets(userId);
-    const secret = authenticator.generateSecret();
+    const secret = generateSecret();
     const encryptedSecret = this.encryptTwoFactorSecret(secret);
 
     await this.usersService.setTwoFactorSecret(user.id, encryptedSecret);
 
-    const otpauthUri = authenticator.keyuri(
-      user.email,
-      this.twoFactorIssuer,
+    const otpauthUri = generateURI({
+      label: user.email,
+      issuer: this.twoFactorIssuer,
       secret,
-    );
+      algorithm: 'sha1',
+      digits: 6,
+      period: 30,
+    });
     const qrCodeUri = await qrcode.toDataURL(otpauthUri);
 
     const plainBackupCodes = Array.from({ length: 10 }, () => randomBytes(4).toString('hex'));
@@ -238,12 +291,25 @@ export class AuthService {
     );
     await this.usersService.updateBackupCodes(user.id, hashedBackupCodes);
 
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.two_factor.setup_started',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return { secret, qrCodeUri, otpauthUri, backupCodes: plainBackupCodes };
   }
 
   async verifyTwoFactor(
     userId: string,
     dto: TwoFactorCodeDto,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ message: string; twoFactorEnabled: boolean }> {
     const user = await this.usersService.findByIdWithSecrets(userId);
 
@@ -252,12 +318,24 @@ export class AuthService {
     }
 
     const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
-    const isValid = authenticator.verify({ token: dto.code, secret });
+    const isValid = verifySync({ token: dto.code, secret }).valid;
     if (!isValid) {
       throw new UnauthorizedException('Invalid two-factor code');
     }
 
     await this.usersService.enableTwoFactor(user.id);
+
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.two_factor.enabled',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return {
       message: 'Two-factor authentication enabled',
       twoFactorEnabled: true,
@@ -267,6 +345,8 @@ export class AuthService {
   async disableTwoFactor(
     userId: string,
     dto: DisableTwoFactorDto,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ message: string; twoFactorEnabled: boolean }> {
     const user = await this.usersService.findByIdWithSecrets(userId);
 
@@ -280,10 +360,87 @@ export class AuthService {
     }
 
     await this.usersService.disableTwoFactor(user.id);
+
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.two_factor.disabled',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return {
       message: 'Two-factor authentication disabled',
       twoFactorEnabled: false,
     };
+  }
+
+  async regenerateBackupCodes(
+    userId: string,
+    dto: RegenerateBackupCodesDto,
+  ): Promise<{ backupCodes: string[] }> {
+    return this.dataSource.transaction(async (manager) => {
+      const user = await manager.findOne(User, {
+        where: { id: userId },
+      });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${userId} not found`);
+      }
+
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        throw new BadRequestException(
+          'Two-factor authentication is not enabled',
+        );
+      }
+
+      const hasPassword = dto.password !== undefined && dto.password !== '';
+      const hasTotpCode =
+        dto.twoFactorCode !== undefined && dto.twoFactorCode !== '';
+
+      if (!hasPassword && !hasTotpCode) {
+        throw new BadRequestException(
+          'Password or two-factor code is required',
+        );
+      }
+
+      if (dto.password !== undefined && dto.password !== '') {
+        const isPasswordValid = await bcrypt.compare(
+          dto.password,
+          user.password,
+        );
+        if (!isPasswordValid) {
+          throw new UnauthorizedException('Invalid password');
+        }
+      }
+
+      if (dto.twoFactorCode !== undefined && dto.twoFactorCode !== '') {
+        const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
+        const isTotpValid = verifySync({
+          token: dto.twoFactorCode,
+          secret,
+        }).valid;
+        if (!isTotpValid) {
+          throw new UnauthorizedException('Invalid two-factor code');
+        }
+      }
+
+      const plainBackupCodes = Array.from({ length: 10 }, () =>
+        randomBytes(4).toString('hex'),
+      );
+      const hashedBackupCodes = await Promise.all(
+        plainBackupCodes.map((code) => bcrypt.hash(code, 10)),
+      );
+
+      user.backupCodes = hashedBackupCodes;
+      await manager.save(user);
+
+      this.logger.info({ userId }, 'Two-factor backup codes regenerated');
+
+      return { backupCodes: plainBackupCodes };
+    });
   }
 
   async verifyEmail(token: string): Promise<{ message: string }> {
@@ -302,6 +459,53 @@ export class AuthService {
     this.logger.info({ userId: payload.sub }, 'Email verified successfully');
 
     return { message: 'Email verified successfully. You can now log in.' };
+  }
+
+  async resendVerificationEmail(
+    resendVerificationDto: ResendVerificationDto,
+  ): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmail(
+      resendVerificationDto.email,
+    );
+
+    // Return the same generic message whether the account exists and is
+    // unverified or not, to avoid user enumeration (same as forgotPassword).
+    if (!user || user.isEmailVerified) {
+      this.logger.info(
+        { email: resendVerificationDto.email },
+        'Verification resend requested for unverifiable account',
+      );
+      return {
+        message:
+          'If an account with that email exists, a verification link has been sent.',
+      };
+    }
+
+    const verificationToken = this.jwtService.sign(
+      { sub: user.id, email: user.email, purpose: 'email-verification' },
+      { expiresIn: '24h' },
+    );
+
+    try {
+      await this.mailService.sendVerificationEmail(
+        user.email,
+        verificationToken,
+      );
+      this.logger.info(
+        { userId: user.id, email: user.email },
+        'Verification email resent',
+      );
+    } catch (err) {
+      this.logger.error(
+        { userId: user.id, error: err.message },
+        'Failed to resend verification email',
+      );
+    }
+
+    return {
+      message:
+        'If an account with that email exists, a verification link has been sent.',
+    };
   }
 
   async refresh(
@@ -533,6 +737,8 @@ export class AuthService {
 
   async forgotPassword(
     forgotPasswordDto: ForgotPasswordDto,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ message: string }> {
     const user = await this.usersService.findByEmail(forgotPasswordDto.email);
 
@@ -541,6 +747,16 @@ export class AuthService {
         { email: forgotPasswordDto.email },
         'Password reset requested for non-existent email',
       );
+      await this.auditLogsService.record({
+        actorId: null,
+        actorType: 'system',
+        action: 'auth.password.reset_requested',
+        resourceType: 'user',
+        resourceId: null,
+        ipAddress,
+        userAgent,
+        metadata: { email: forgotPasswordDto.email, reason: 'user_not_found' },
+      });
       return {
         message:
           'If an account with that email exists, a password reset link has been sent.',
@@ -573,6 +789,17 @@ export class AuthService {
       );
     }
 
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.password.reset_requested',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return {
       message:
         'If an account with that email exists, a password reset link has been sent.',
@@ -581,6 +808,8 @@ export class AuthService {
 
   async resetPassword(
     resetPasswordDto: ResetPasswordDto,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ message: string }> {
     const tokenHash = createHash('sha256')
       .update(resetPasswordDto.token)
@@ -611,6 +840,15 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
     await this.usersService.updatePassword(user.id, hashedPassword);
 
+    try {
+      await this.mailService.sendPasswordChangedEmail(user.email);
+    } catch (error) {
+      this.logger.warn(
+        { userId: user.id, email: user.email, error: error.message },
+        'Failed to send password changed email',
+      );
+    }
+
     await this.passwordResetTokenRepository.update(
       { tokenHash },
       { used: true },
@@ -626,7 +864,38 @@ export class AuthService {
       'Password reset successful, all sessions invalidated',
     );
 
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.password.reset_completed',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { email: user.email },
+    });
+
     return { message: 'Password reset successful. Please log in again.' };
+  }
+
+  async getRoles(): Promise<Pick<Role, 'id' | 'name' | 'permissions' | 'description'>[]> {
+    return this.roleRepository.find({
+      select: ['id', 'name', 'permissions', 'description'],
+      order: { name: 'ASC' },
+    });
+  }
+
+  async getRoleById(id: string): Promise<Pick<Role, 'id' | 'name' | 'permissions' | 'description'>> {
+    const role = await this.roleRepository.findOne({
+      where: { id },
+      select: ['id', 'name', 'permissions', 'description'],
+    });
+
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    return role;
   }
 
   async createRole(dto: CreateRoleDto): Promise<Role> {
@@ -639,7 +908,13 @@ export class AuthService {
     return this.roleRepository.save(role);
   }
 
-  async assignRole(userId: string, roleId: string): Promise<User> {
+  async assignRole(
+    userId: string,
+    roleId: string,
+    actorId?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<User> {
     const user = await this.usersService.findOne(userId);
     if (!user) {
       throw new BadRequestException('User not found');
@@ -651,6 +926,24 @@ export class AuthService {
     }
 
     user.roleId = roleId;
-    return this.usersService.updateUser(userId, user);
+    const updatedUser = await this.userRepository.save(user);
+
+    await this.auditLogsService.record({
+      actorId: actorId ?? null,
+      actorType: actorId ? 'user' : 'system',
+      action: 'auth.role.assigned',
+      resourceType: 'user',
+      resourceId: userId,
+      ipAddress,
+      userAgent,
+      metadata: {
+        targetUserId: userId,
+        targetEmail: (user as any).email,
+        roleId,
+        roleName: role.name,
+      },
+    });
+
+    return updatedUser;
   }
 }

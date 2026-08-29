@@ -9,8 +9,10 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -68,8 +70,9 @@ export class ApiKeysController {
   async create(
     @CurrentUser() user: User,
     @Body() dto: CreateApiKeyDto,
+    @Req() req: Request,
   ): Promise<{ apiKey: ApiKey; plaintext: string }> {
-    return this.apiKeysService.create(user.id, dto);
+    return this.apiKeysService.create(user.id, dto, user.id, req.ip, req.headers['user-agent']);
   }
 
   @Get()
@@ -110,8 +113,9 @@ export class ApiKeysController {
   async revoke(
     @Param('id') id: string,
     @CurrentUser() user: User,
+    @Req() req: Request,
   ): Promise<void> {
-    return this.apiKeysService.revoke(id, user.id);
+    return this.apiKeysService.revoke(id, user.id, user.id, req.ip, req.headers['user-agent']);
   }
 
   @Post(':id/rotate')
@@ -144,8 +148,9 @@ export class ApiKeysController {
   async rotate(
     @Param('id') id: string,
     @CurrentUser() user: User,
+    @Req() req: Request,
   ): Promise<{ apiKey: ApiKey; plaintext: string }> {
-    return this.apiKeysService.rotate(id, user.id);
+    return this.apiKeysService.rotate(id, user.id, user.id, req.ip, req.headers['user-agent']);
   }
 
   @Get(':id/usage')

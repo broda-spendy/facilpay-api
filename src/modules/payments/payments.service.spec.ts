@@ -194,6 +194,52 @@ describe('PaymentsService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('ensurePaymentLimits', () => {
+    it('counts daily totals separately per currency for the same user', async () => {
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date();
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const getRawOne = jest.fn().mockResolvedValueOnce({ sum: '100' }).mockResolvedValueOnce({ sum: '0' });
+      queryBuilderMock.select = jest.fn().mockReturnValue(queryBuilderMock);
+      queryBuilderMock.where = jest.fn().mockReturnValue(queryBuilderMock);
+      queryBuilderMock.getRawOne = getRawOne;
+      mockPaymentRepository.createQueryBuilder.mockReturnValue(queryBuilderMock);
+
+      const configService = { get: jest.fn((key, defaultValue) => {
+        if (key === 'PAYMENT_DAILY_LIMIT_PER_USER') return '150';
+        return defaultValue;
+      }) };
+
+      service = new PaymentsService(
+        mockPaymentRepository as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        mockDataSource as any,
+        mockAppLogger as any,
+        mockPaymentSseService as any,
+        {} as any,
+        { dispatchEventToMerchant: jest.fn() } as any,
+        configService as any,
+        {} as any,
+        {} as any,
+      );
+
+      await expect(service.create({ amount: 50, currency: 'USD', payerEmail: 'user@example.com' })).resolves.toBeDefined();
+      await expect(service.create({ amount: 50, currency: 'EUR', payerEmail: 'user@example.com' })).resolves.toBeDefined();
+
+      expect(queryBuilderMock.where).toHaveBeenCalledWith('payment.createdAt >= :start', { start: expect.any(Date) });
+      expect(queryBuilderMock.where).toHaveBeenCalledWith('payment.createdAt <= :end', { end: expect.any(Date) });
+      expect(getRawOne).toHaveBeenCalledTimes(2);
+      expect(queryBuilderMock.andWhere).toHaveBeenCalledWith('payment.currency = :currency', { currency: 'USD' });
+      expect(queryBuilderMock.andWhere).toHaveBeenCalledWith('payment.currency = :currency', { currency: 'EUR' });
+    });
+  });
+
   describe('create', () => {
     it('should successfully create a payment using transactions', async () => {
       const dto = {

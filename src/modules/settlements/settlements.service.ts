@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { Settlement } from './entities/settlement.entity';
+import { SettlementAdjustment } from './entities/settlement-adjustment.entity';
 import {
   MerchantSettlementConfig,
   SettlementSchedule,
@@ -19,11 +20,14 @@ import {
 
 @Injectable()
 export class SettlementsService {
+  private readonly logger = new Logger(SettlementsService.name);
   private readonly settleOnGross: boolean;
 
   constructor(
     @InjectRepository(Settlement)
     private readonly settlementRepo: Repository<Settlement>,
+    @InjectRepository(SettlementAdjustment)
+    private readonly settlementAdjustmentRepo: Repository<SettlementAdjustment>,
     @InjectRepository(MerchantSettlementConfig)
     private readonly configRepo: Repository<MerchantSettlementConfig>,
     @InjectRepository(Payment)
@@ -103,6 +107,24 @@ export class SettlementsService {
     return { data, total, page, limit };
   }
 
+  async findAdjustmentsForSettlement(
+    merchantId: string,
+    settlementId: string,
+  ): Promise<SettlementAdjustment[]> {
+    const settlement = await this.settlementRepo.findOneBy({
+      id: settlementId,
+      merchantId,
+    });
+    if (!settlement) {
+      throw new NotFoundException(`Settlement ${settlementId} not found`);
+    }
+
+    return this.settlementAdjustmentRepo.find({
+      where: { settlementId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async runDailySettlements(): Promise<void> {
     await this.processSettlementsForSchedule(SettlementSchedule.DAILY);
@@ -122,7 +144,14 @@ export class SettlementsService {
     const configs = await this.configRepo.find({ where: { schedule } });
 
     for (const config of configs) {
-      await this.processMerchantSettlement(config);
+      try {
+        await this.processMerchantSettlement(config);
+      } catch (error) {
+        this.logger.error(
+          `Settlement processing failed for merchant ${config.userId}`,
+          error instanceof Error ? error.stack : error,
+        );
+      }
     }
   }
 
@@ -135,8 +164,15 @@ export class SettlementsService {
     const settlements: Settlement[] = [];
 
     for (const config of configs) {
-      const settlement = await this.processMerchantSettlement(config);
-      if (settlement) settlements.push(settlement);
+      try {
+        const settlement = await this.processMerchantSettlement(config);
+        if (settlement) settlements.push(settlement);
+      } catch (error) {
+        this.logger.error(
+          `Settlement processing failed for merchant ${config.userId}`,
+          error instanceof Error ? error.stack : error,
+        );
+      }
     }
 
     const totalAmount = settlements.reduce(

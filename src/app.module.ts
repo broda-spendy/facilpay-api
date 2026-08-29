@@ -23,16 +23,17 @@ import { MerchantsModule } from './modules/merchants/merchants.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { SecurityHeadersMiddleware } from './common/middleware/security-headers.middleware';
+import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         connection: {
-          host: config.get('REDIS_HOST', 'localhost'),
-          port: config.get('REDIS_PORT', 6379),
+          host: configService.get('REDIS_HOST', 'localhost'),
+          port: configService.get('REDIS_PORT', 6379),
         },
       }),
     }),
@@ -53,7 +54,7 @@ import { SecurityHeadersMiddleware } from './common/middleware/security-headers.
     RatesModule,
     MerchantsModule,
     OnboardingModule,
-    SessionsModule,
+    AuditLogsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
