@@ -9,7 +9,12 @@ describe('PaymentsController', () => {
 
   beforeEach(() => {
     paymentsService = { createBulk: jest.fn() };
-    controller = new PaymentsController(paymentsService as any);
+    controller = new PaymentsController(
+      paymentsService as any,
+      undefined as any,
+      undefined as any,
+      { get: jest.fn().mockReturnValue(undefined) } as any,
+    );
   });
 
   describe('createBulk', () => {
