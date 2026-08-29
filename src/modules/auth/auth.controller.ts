@@ -8,10 +8,12 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { extractClientIp } from '../merchants/ip-utils';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { RegisterDto } from '../users/dto/register.dto';
@@ -192,9 +194,13 @@ export class AuthController {
   })
   async login(
     @Body() loginDto: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.login(loginDto);
+    const result = await this.authService.login(loginDto, {
+      ipAddress: extractClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
     if (result['2fa_required']) {
       res.status(HttpStatus.ACCEPTED);
     }
@@ -366,8 +372,11 @@ export class AuthController {
       },
     },
   })
-  async refresh(@Body() dto: RefreshTokenDto) {
-    return this.authService.refresh(dto.refresh_token);
+  async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
+    return this.authService.refresh(dto.refresh_token, {
+      ipAddress: extractClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
   }
 
   @Public()

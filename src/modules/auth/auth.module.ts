@@ -16,12 +16,14 @@ import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Role } from './entities/role.entity';
 import { MailService } from './mail/mail.service';
 import { PasswordStrengthService } from './password-strength.service';
+import { SessionsModule } from '../sessions/sessions.module';
 
 @Module({
   imports: [
     UsersModule,
     PassportModule,
     HttpModule,
+    SessionsModule,
     TypeOrmModule.forFeature([RefreshToken, PasswordResetToken, Role]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
