@@ -98,6 +98,22 @@ describe('AuthService', () => {
           provide: 'PasswordResetTokenRepository',
           useValue: { save: jest.fn().mockResolvedValue({}) },
         },
+        {
+          provide: require('./password-strength.service').PasswordStrengthService,
+          useValue: {
+            validateAndScore: jest
+              .fn()
+              .mockResolvedValue({ score: 3, feedback: [] }),
+          },
+        },
+        {
+          provide: 'RoleRepository',
+          useValue: {
+            findOne: jest.fn(),
+            create: jest.fn(),
+            save: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -284,6 +300,61 @@ describe('AuthService', () => {
 
       expect(usersService.findOne).toHaveBeenCalledWith(userId);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('resendVerificationEmail', () => {
+    it('sends a verification email for an existing unverified user', async () => {
+      const user = {
+        id: '123',
+        email: 'test@example.com',
+        isEmailVerified: false,
+      };
+      mockUsersService.findByEmail.mockResolvedValue(user);
+      mockJwtService.sign.mockReturnValue('verification-token-123');
+
+      const result = await service.resendVerificationEmail({
+        email: 'test@example.com',
+      });
+
+      expect(mockUsersService.findByEmail).toHaveBeenCalledWith(
+        'test@example.com',
+      );
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        { sub: user.id, email: user.email, purpose: 'email-verification' },
+        { expiresIn: '24h' },
+      );
+      expect(mockMailService.sendVerificationEmail).toHaveBeenCalledWith(
+        'test@example.com',
+        'verification-token-123',
+      );
+      expect(result.message).toContain('verification link has been sent');
+    });
+
+    it('returns the generic message without sending an email when the user is not found', async () => {
+      mockUsersService.findByEmail.mockResolvedValue(undefined);
+
+      const result = await service.resendVerificationEmail({
+        email: 'nobody@example.com',
+      });
+
+      expect(mockMailService.sendVerificationEmail).not.toHaveBeenCalled();
+      expect(result.message).toContain('verification link has been sent');
+    });
+
+    it('returns the generic message without sending an email when the user is already verified', async () => {
+      mockUsersService.findByEmail.mockResolvedValue({
+        id: '123',
+        email: 'verified@example.com',
+        isEmailVerified: true,
+      });
+
+      const result = await service.resendVerificationEmail({
+        email: 'verified@example.com',
+      });
+
+      expect(mockMailService.sendVerificationEmail).not.toHaveBeenCalled();
+      expect(result.message).toContain('verification link has been sent');
     });
   });
 
