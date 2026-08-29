@@ -176,4 +176,118 @@ describe('SettlementsService', () => {
       { settlementId: 'settlement-1' },
     );
   });
+
+  it('produces independent settlements for a merchant with both USD and EUR configs', async () => {
+    const usdConfig: MerchantSettlementConfig = {
+      id: 'config-usd',
+      userId: merchantId,
+      schedule: SettlementSchedule.DAILY,
+      currency: 'USD',
+      lastSettledAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const eurConfig: MerchantSettlementConfig = {
+      id: 'config-eur',
+      userId: merchantId,
+      schedule: SettlementSchedule.DAILY,
+      currency: 'EUR',
+      lastSettledAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const usdPayments = [
+      {
+        id: 'payment-usd-1',
+        amount: 100,
+        netAmount: 95,
+        status: PaymentStatus.COMPLETED,
+        currency: 'USD',
+        merchantId,
+        updatedAt: new Date(),
+      },
+    ] as Payment[];
+    const eurPayments = [
+      {
+        id: 'payment-eur-1',
+        amount: 80,
+        netAmount: 76,
+        status: PaymentStatus.COMPLETED,
+        currency: 'EUR',
+        merchantId,
+        updatedAt: new Date(),
+      },
+    ] as Payment[];
+
+    let currentCurrency: string | undefined;
+    const queryBuilder = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockImplementation((_clause: string, params?: { currency?: string }) => {
+        if (params?.currency) currentCurrency = params.currency;
+        return queryBuilder;
+      }),
+      getMany: jest
+        .fn()
+        .mockImplementation(async () => (currentCurrency === 'EUR' ? eurPayments : usdPayments)),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        SettlementsService,
+        {
+          provide: getRepositoryToken(Settlement),
+          useValue: {
+            create: jest.fn().mockImplementation((payload) => payload),
+            save: jest.fn().mockImplementation(async (payload) => ({
+              ...payload,
+              id: `settlement-${payload.currency}`,
+            })),
+            find: jest.fn(),
+          },
+        },
+        {
+          provide: getRepositoryToken(MerchantSettlementConfig),
+          useValue: {
+            findOneBy: jest.fn(),
+            find: jest.fn().mockResolvedValue([usdConfig, eurConfig]),
+            save: jest.fn().mockImplementation(async (c) => c),
+          },
+        },
+        {
+          provide: getRepositoryToken(Payment),
+          useValue: {
+            createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+            update: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendSettlementNotification: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: UsersService,
+          useValue: {
+            findOne: jest.fn().mockResolvedValue({ email: 'merchant@test.com' }),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
+          },
+        },
+      ],
+    }).compile();
+
+    const multiCurrencyService = module.get<SettlementsService>(SettlementsService);
+
+    const result = await multiCurrencyService.triggerManualRun();
+
+    expect(result.settlementsCreated).toBe(2);
+    const currencies = result.settlements.map((s) => s.currency).sort();
+    expect(currencies).toEqual(['EUR', 'USD']);
+  });
 });
