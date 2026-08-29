@@ -258,10 +258,39 @@ export class AuthService {
       throw new BadRequestException('Two-factor authentication is not enabled');
     }
 
+    // Check account lockout — same protection as the login path
+    if (this.usersService.isAccountLocked(user)) {
+      const secondsUntilUnlock = this.usersService.getSecondsUntilUnlock(user);
+      const error: any = new HttpException(
+        {
+          statusCode: 423,
+          message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+          error: 'Locked',
+        },
+        HttpStatus.LOCKED,
+      );
+      error.getResponse = () => ({
+        statusCode: 423,
+        message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+        error: 'Locked',
+      });
+      error.getStatus = () => 423;
+      throw error;
+    }
+
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
+      // Track failed attempt through the shared lockout counter
+      await this.usersService.incrementFailedLoginAttempts(
+        user.id,
+        this.maxFailedAttempts,
+        this.lockDurationMinutes,
+      );
       throw new UnauthorizedException('Invalid password');
     }
+
+    // Reset lockout counter on successful password verification
+    await this.usersService.resetFailedLoginAttempts(user.id);
 
     await this.usersService.disableTwoFactor(user.id);
     return {
