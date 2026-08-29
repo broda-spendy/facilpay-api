@@ -41,6 +41,7 @@ import { UsersService } from '../users/users.service';
 import { SettlementAdjustment } from '../settlements/entities/settlement-adjustment.entity';
 
 const DEFAULT_PAYMENT_EXPIRY_SECONDS = 1800;
+const DEFAULT_MAX_REFUNDS_PER_PAYMENT = 20;
 
 @Injectable()
 export class PaymentsService {
@@ -786,6 +787,25 @@ export class PaymentsService {
 
       if (payment.status === PaymentStatus.FAILED) {
         throw new ConflictException('Cannot refund a failed payment');
+      }
+
+      const maxRefundsPerPayment = Number(
+        this.configService.get<string>(
+          'PAYMENT_MAX_REFUNDS_PER_PAYMENT',
+          String(DEFAULT_MAX_REFUNDS_PER_PAYMENT),
+        ),
+      );
+
+      if (maxRefundsPerPayment > 0) {
+        const existingRefundCount = await queryRunner.manager.count(Refund, {
+          where: { paymentId: id },
+        });
+
+        if (existingRefundCount >= maxRefundsPerPayment) {
+          throw new ConflictException(
+            `Payment ${id} has reached the maximum of ${maxRefundsPerPayment} refunds per payment`,
+          );
+        }
       }
 
       const refundAmount =
