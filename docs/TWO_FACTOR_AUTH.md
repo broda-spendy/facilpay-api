@@ -222,12 +222,60 @@ Backup codes are accepted anywhere a TOTP code is accepted (the `twoFactorCode` 
 
 ### Regeneration
 
-To get a fresh set of backup codes, re-run the enable flow:
+To get a fresh set of backup codes without touching the TOTP secret:
 
-1. Call `POST /v1/auth/2fa/enable` — this generates a new secret **and** 10 new backup codes.
-2. Call `POST /v1/auth/2fa/verify` with a valid TOTP from the new secret to re-activate 2FA.
+```
+POST /v1/auth/2fa/backup-codes/regenerate
+Authorization: Bearer <access_token>
+```
 
-> All previous backup codes are invalidated when the enable endpoint is called again.
+**Request Body** (provide **either** the password **or** a valid TOTP code):
+```json
+{
+  "password": "P@ssw0rd!"
+}
+```
+
+or
+
+```json
+{
+  "twoFactorCode": "123456"
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "backupCodes": [
+    "a1b2c3d4",
+    "e5f6a7b8",
+    "..."
+  ]
+}
+```
+
+- The TOTP secret and `twoFactorEnabled` state are **unchanged** — 2FA stays active and there is no need to re-run `/2fa/verify`.
+- The previous backup codes are invalidated atomically in the same transaction that stores the new ones.
+- Backup codes cannot be used to regenerate (only a password or a live TOTP code is accepted), so a compromised backup code cannot rotate the set.
+
+**Response (400 Bad Request):**
+```json
+{
+  "statusCode": 400,
+  "message": "Two-factor authentication is not enabled",
+  "error": "Bad Request"
+}
+```
+
+**Response (401 Unauthorized):**
+```json
+{
+  "statusCode": 401,
+  "message": "Invalid password",
+  "error": "Unauthorized"
+}
+```
 
 ---
 
@@ -295,9 +343,10 @@ Each backup code is 8 hex characters (4 random bytes), giving ~4 billion possibl
 | Status | Message | Cause |
 |--------|---------|-------|
 | 400 | `Two-factor authentication is not set up` | `/2fa/verify` called before `/2fa/enable` |
-| 400 | `Two-factor authentication is not enabled` | `/2fa/disable` called when 2FA is already off |
-| 401 | `Invalid two-factor code` | Wrong TOTP code or backup code on verify/login |
-| 401 | `Invalid password` | Wrong password on disable |
+| 400 | `Two-factor authentication is not enabled` | `/2fa/disable` called when 2FA is already off, or `/2fa/backup-codes/regenerate` when 2FA is not active |
+| 400 | `Password or two-factor code is required` | `/2fa/backup-codes/regenerate` called without a password or TOTP code |
+| 401 | `Invalid two-factor code` | Wrong TOTP code or backup code on verify/login, or wrong TOTP on regenerate |
+| 401 | `Invalid password` | Wrong password on disable or regenerate |
 
 ---
 
