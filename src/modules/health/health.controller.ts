@@ -11,7 +11,7 @@ export class HealthController {
   @ApiOperation({
     summary: 'Health check',
     description:
-      'Returns API health status including database, Stellar network, and system metrics. Returns 503 if any critical subsystem is unhealthy.',
+      'Returns API health status including database, Stellar network, Redis/BullMQ queue connectivity, and system metrics. Returns 503 if any critical subsystem is unhealthy.',
   })
   @ApiOkResponse({
     description: 'Health status (ok or degraded).',
@@ -33,6 +33,10 @@ export class HealthController {
           horizonStream: {
             status: 'connected',
             message: 'Horizon SSE stream is active',
+          },
+          queue: {
+            status: 'healthy',
+            message: 'Redis connection is healthy',
           },
           system: {
             memory: {
@@ -56,8 +60,8 @@ export class HealthController {
         uptime: 3600,
         services: {
           database: {
-            status: 'unhealthy',
-            message: 'Database connection failed',
+            status: 'healthy',
+            message: 'Database connection is healthy',
           },
           stellar: {
             status: 'healthy',
@@ -66,6 +70,10 @@ export class HealthController {
           horizonStream: {
             status: 'disconnected',
             message: 'Horizon SSE stream is not connected',
+          },
+          queue: {
+            status: 'unhealthy',
+            message: 'connect ECONNREFUSED 127.0.0.1:6379',
           },
           system: {
             memory: {

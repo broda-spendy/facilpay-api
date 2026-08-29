@@ -1,4 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
 import { DataSource } from 'typeorm';
 import { AppLogger } from '../logger/logger.service';
 import { Logger } from 'pino';
@@ -23,6 +26,10 @@ interface HealthCheckResult {
       status: 'connected' | 'disconnected' | 'disabled';
       message: string;
     };
+    queue: {
+      status: 'healthy' | 'unhealthy';
+      message: string;
+    };
     system: {
       memory: {
         used: number;
@@ -41,6 +48,7 @@ export class HealthService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly horizonStreamService: StellarHorizonStreamService,
+    @InjectQueue('webhooks') private readonly webhooksQueue: Queue,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child({ module: HealthService.name });
@@ -50,10 +58,19 @@ export class HealthService {
     const dbStatus = await this.checkDatabase();
     const stellarStatus = await this.checkStellarNetwork();
     const horizonStreamStatus = this.checkHorizonStream();
+    const queueStatus = await this.checkQueue();
     const systemStatus = this.checkSystem();
 
-    const isHealthy = dbStatus.status === 'healthy' && stellarStatus.status === 'healthy';
-    const isDegraded = !isHealthy && (dbStatus.status === 'healthy' || stellarStatus.status === 'healthy');
+    const isHealthy =
+      dbStatus.status === 'healthy' &&
+      stellarStatus.status === 'healthy' &&
+      queueStatus.status === 'healthy';
+
+    const isDegraded =
+      !isHealthy &&
+      (dbStatus.status === 'healthy' ||
+        stellarStatus.status === 'healthy' ||
+        queueStatus.status === 'healthy');
 
     const overallStatus = isHealthy ? 'ok' : isDegraded ? 'degraded' : 'unhealthy';
     const statusCode = isHealthy ? 200 : isDegraded ? 200 : 503;
@@ -67,6 +84,7 @@ export class HealthService {
         database: dbStatus,
         stellar: stellarStatus,
         horizonStream: horizonStreamStatus,
+        queue: queueStatus,
         system: systemStatus,
       },
     };
@@ -138,6 +156,34 @@ export class HealthService {
       return { status: 'connected', message: 'Horizon SSE stream is active' };
     }
     return { status: 'disconnected', message: 'Horizon SSE stream is not connected' };
+  }
+
+  private async checkQueue(): Promise<{
+    status: 'healthy' | 'unhealthy';
+    message: string;
+  }> {
+    try {
+      const client = (await this.webhooksQueue.client) as unknown as Redis;
+      const response = await client.ping();
+      if (response === 'PONG') {
+        return { status: 'healthy', message: 'Redis connection is healthy' };
+      }
+      return {
+        status: 'unhealthy',
+        message: `Unexpected Redis PING response: ${response}`,
+      };
+    } catch (error) {
+      this.logger.error(
+        {
+          err: error instanceof Error ? error : new Error('Redis check failed'),
+        },
+        'Redis/queue health check failed',
+      );
+      return {
+        status: 'unhealthy',
+        message: error instanceof Error ? error.message : 'Redis unreachable',
+      };
+    }
   }
 
   private checkSystem(): {
