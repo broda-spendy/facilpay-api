@@ -4,11 +4,22 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiKeysService } from './api-keys.service';
+import { extractClientIp, parseTrustedProxyList } from '../merchants/ip-utils';
 
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
-  constructor(private readonly apiKeysService: ApiKeysService) {}
+  private readonly trustedProxies: string[];
+
+  constructor(
+    private readonly apiKeysService: ApiKeysService,
+    configService: ConfigService,
+  ) {
+    this.trustedProxies = parseTrustedProxyList(
+      configService.get<string>('TRUSTED_PROXY_IPS'),
+    );
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -27,7 +38,7 @@ export class ApiKeyAuthGuard implements CanActivate {
       apiKey.id,
       request.path || request.url,
       request.method,
-      request.ip || request.connection?.remoteAddress,
+      extractClientIp(request, this.trustedProxies),
       request.headers['user-agent'],
       request,
     );
