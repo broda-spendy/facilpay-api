@@ -23,6 +23,7 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { VerifyEmailQueryDto } from './dto/verify-email-query.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
+import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
 import { AuthThrottle } from '../throttler/throttler.decorator';
 import { Public } from './decorators/public.decorator';
 import { RolesGuard } from './roles.guard';
@@ -303,6 +304,44 @@ export class AuthController {
     @Body() dto: DisableTwoFactorDto,
   ) {
     return this.authService.disableTwoFactor(user.id, dto);
+  }
+
+  @Post('2fa/backup-codes/regenerate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Regenerate two-factor backup codes',
+    description:
+      'Requires the account password or a valid TOTP code. Replaces the current backup codes with a fresh set of 10 without changing the TOTP secret or requiring /2fa/verify again.',
+  })
+  @ApiBody({ type: RegenerateBackupCodesDto })
+  @ApiOkResponse({
+    description: 'Backup codes regenerated.',
+    schema: {
+      example: {
+        backupCodes: ['a1b2c3d4', 'e5f6a7b8'],
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Two-factor authentication is not enabled, or neither password nor TOTP code was provided.',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid password or invalid TOTP code.',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid password',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  async regenerateBackupCodes(
+    @CurrentUser() user: User,
+    @Body() dto: RegenerateBackupCodesDto,
+  ) {
+    return this.authService.regenerateBackupCodes(user.id, dto);
   }
 
   @Public()

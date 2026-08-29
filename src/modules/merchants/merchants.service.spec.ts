@@ -6,6 +6,7 @@ import { MerchantIpAllowlist } from './entities/merchant-ip-allowlist.entity';
 import { GeoLookupService } from './geo-lookup.service';
 import { GeoRestrictedException } from './geo-restricted.exception';
 import { IpAllowlistBlockedException } from './ip-allowlist-blocked.exception';
+import { extractClientIp } from './ip-utils';
 
 describe('MerchantsService', () => {
   let service: MerchantsService;
@@ -16,12 +17,12 @@ describe('MerchantsService', () => {
   beforeEach(async () => {
     mockRepo = {
       findOneBy: jest.fn(),
-      create: jest.fn((v) => v),
+      create: jest.fn((v) => ({ ...v })),
       save: jest.fn((v) => Promise.resolve(v)),
     };
     mockIpAllowlistRepo = {
       findOneBy: jest.fn(),
-      create: jest.fn((v) => v),
+      create: jest.fn((v) => ({ ...v })),
       save: jest.fn((v) => Promise.resolve(v)),
     };
     mockGeoLookupService = { lookupCountry: jest.fn() };
@@ -277,6 +278,64 @@ describe('MerchantsService', () => {
       } catch (err: any) {
         expect(err.getResponse().code).toBe('ip_not_allowed');
       }
+    });
+
+    it('does not let a spoofed X-Forwarded-For bypass the allowlist', async () => {
+      mockIpAllowlistRepo.findOneBy.mockResolvedValue({
+        merchantId: 'merchant-1',
+        allowedIps: ['203.0.113.10'],
+      });
+
+      // Attacker connects directly (untrusted peer) and forges X-Forwarded-For
+      // to match an allowlisted IP.
+      const spoofed = {
+        socket: { remoteAddress: '198.51.100.7' },
+        headers: { 'x-forwarded-for': '203.0.113.10' },
+      };
+      const clientIp = extractClientIp(spoofed, []);
+
+      expect(clientIp).toBe('198.51.100.7');
+      await expect(
+        service.enforceIpAllowlist('merchant-1', clientIp),
+      ).rejects.toThrow(IpAllowlistBlockedException);
+    });
+
+    it('does not let a forged X-Forwarded-For inserted behind a trusted proxy bypass the allowlist', async () => {
+      mockIpAllowlistRepo.findOneBy.mockResolvedValue({
+        merchantId: 'merchant-1',
+        allowedIps: ['203.0.113.10'],
+      });
+
+      // Client behind a trusted proxy forges the leading entry; the proxy
+      // appends the client's real IP.
+      const spoofed = {
+        socket: { remoteAddress: '10.0.0.5' },
+        headers: { 'x-forwarded-for': '203.0.113.10, 198.51.100.7, 10.0.0.5' },
+      };
+      const clientIp = extractClientIp(spoofed, ['10.0.0.0/8']);
+
+      expect(clientIp).toBe('198.51.100.7');
+      await expect(
+        service.enforceIpAllowlist('merchant-1', clientIp),
+      ).rejects.toThrow(IpAllowlistBlockedException);
+    });
+
+    it('resolves the real client IP when the peer is a trusted proxy', async () => {
+      mockIpAllowlistRepo.findOneBy.mockResolvedValue({
+        merchantId: 'merchant-1',
+        allowedIps: ['198.51.100.7'],
+      });
+
+      const proxied = {
+        socket: { remoteAddress: '10.0.0.5' },
+        headers: { 'x-forwarded-for': '198.51.100.7, 10.0.0.5' },
+      };
+      const clientIp = extractClientIp(proxied, ['10.0.0.0/8']);
+
+      expect(clientIp).toBe('198.51.100.7');
+      await expect(
+        service.enforceIpAllowlist('merchant-1', clientIp),
+      ).resolves.toBeUndefined();
     });
   });
 });

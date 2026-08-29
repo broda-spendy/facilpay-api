@@ -12,6 +12,7 @@ import {
   RecurringPaymentStatus,
 } from './recurring-payment.entity';
 import { CreateRecurringPaymentDto } from './dto/create-recurring-payment.dto';
+import { UpdateRecurringPaymentDto } from './dto/update-recurring-payment.dto';
 import { PaymentsService } from './payments.service';
 import { IdempotencyService } from './idempotency.service';
 import { AppLogger } from '../logger/logger.service';
@@ -69,6 +70,20 @@ export class RecurringPaymentsService {
       throw new NotFoundException(`Recurring payment plan ${id} not found`);
     }
     return plan;
+  }
+
+  async update(
+    id: string,
+    createdBy: string,
+    dto: UpdateRecurringPaymentDto,
+  ): Promise<RecurringPayment> {
+    const plan = await this.findOne(id, createdBy);
+
+    if (dto.amount !== undefined) plan.amount = dto.amount;
+    if (dto.interval !== undefined) plan.interval = dto.interval;
+    if (dto.description !== undefined) plan.description = dto.description;
+
+    return this.recurringPaymentRepository.save(plan);
   }
 
   async pause(id: string, createdBy: string): Promise<RecurringPayment> {

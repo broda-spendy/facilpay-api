@@ -37,6 +37,8 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import { extractClientIp, parseTrustedProxyList } from '../merchants/ip-utils';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { PaymentsService } from './payments.service';
@@ -72,11 +74,18 @@ import { UserRole } from '../../common/constants/roles';
 @ApiTags('payments')
 @Controller('v1/payments')
 export class PaymentsController {
+  private readonly trustedProxies: string[];
+
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly paymentSseService: PaymentSseService,
     private readonly merchantsService: MerchantsService,
-  ) { }
+    configService: ConfigService,
+  ) {
+    this.trustedProxies = parseTrustedProxyList(
+      configService.get<string>('TRUSTED_PROXY_IPS'),
+    );
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -173,7 +182,7 @@ export class PaymentsController {
   ) {
     await this.merchantsService.enforceGeoRestriction(
       createPaymentDto.merchantId,
-      req.ip,
+      extractClientIp(req, this.trustedProxies),
       testModeHeader === 'true',
     );
     return this.paymentsService.create(createPaymentDto);

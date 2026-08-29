@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Param,
   UseGuards,
   Request,
   Query,
@@ -15,6 +16,8 @@ import {
   ApiBearerAuth,
   ApiOkResponse,
   ApiUnauthorizedResponse,
+  ApiNotFoundResponse,
+  ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
 import { SettlementsService } from './settlements.service';
@@ -61,5 +64,20 @@ export class SettlementsController {
     @Query() dto?: GetSettlementsDto,
   ) {
     return this.service.findMerchantSettlements(req.user.id, dto);
+  }
+
+  @Get(':id/adjustments')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'List post-settlement refund adjustments for a settlement',
+    description:
+      'Returns adjustments created when a payment already included in this settlement is later refunded.',
+  })
+  @ApiParam({ name: 'id', description: 'Settlement UUID' })
+  @ApiOkResponse({ description: 'Settlement adjustments.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
+  @ApiNotFoundResponse({ description: 'Settlement not found.' })
+  findAdjustments(@Param('id') id: string, @Request() req: any) {
+    return this.service.findAdjustmentsForSettlement(req.user.id, id);
   }
 }
