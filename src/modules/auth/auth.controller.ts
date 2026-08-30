@@ -26,6 +26,7 @@ import { VerifyEmailQueryDto } from './dto/verify-email-query.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
 import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
+import { StepUpDto, StepUpConfirmationDto } from './dto/step-up.dto';
 import { AuthThrottle } from '../throttler/throttler.decorator';
 import { Public } from './decorators/public.decorator';
 import { RolesGuard } from './roles.guard';
@@ -314,6 +315,47 @@ export class AuthController {
     @Req() req: Request,
   ) {
     return this.authService.disableTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
+  }
+
+  @Post('step-up')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Perform step-up authentication',
+    description:
+      'Re-authenticates the current user by verifying their password or TOTP code and returns a short-lived step-up token valid for 5 minutes. Required before sensitive operations like creating/rotating admin-scope API keys or assigning high-privilege roles.',
+  })
+  @ApiBody({ type: StepUpDto })
+  @ApiOkResponse({
+    description: 'Step-up authentication successful.',
+    type: StepUpConfirmationDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid password or TOTP code.',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid password',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Neither password nor TOTP code was provided.',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Either password or totpCode is required',
+        error: 'Bad Request',
+      },
+    },
+  })
+  async stepUp(
+    @CurrentUser() user: User,
+    @Body() dto: StepUpDto,
+    @Req() req: Request,
+  ): Promise<StepUpConfirmationDto> {
+    return this.authService.stepUp(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
   @Post('2fa/backup-codes/regenerate')
