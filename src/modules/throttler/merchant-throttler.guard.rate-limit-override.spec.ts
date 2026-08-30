@@ -1,6 +1,15 @@
 import { Reflector } from '@nestjs/core';
 import { MerchantThrottlerGuard } from './merchant-throttler.guard';
 
+const mockAppLogger = {
+  log: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+  verbose: jest.fn(),
+  child: jest.fn().mockReturnThis(),
+};
+
 describe('MerchantThrottlerGuard - rate limit overrides', () => {
   let guard: MerchantThrottlerGuard;
   let mockUsersService: { findOne: jest.Mock };
@@ -11,6 +20,7 @@ describe('MerchantThrottlerGuard - rate limit overrides', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     mockUsersService = { findOne: jest.fn() };
     mockStorage = {
       increment: jest.fn().mockResolvedValue({
@@ -26,6 +36,7 @@ describe('MerchantThrottlerGuard - rate limit overrides', () => {
       mockStorage as any,
       new Reflector(),
       mockUsersService as any,
+      mockAppLogger as any,
     );
     await (guard as any).onModuleInit();
   });
@@ -82,6 +93,18 @@ describe('MerchantThrottlerGuard - rate limit overrides', () => {
 
     expect(override).toBeNull();
     expect(mockUsersService.findOne).not.toHaveBeenCalled();
+  });
+
+  it('logs a warning via AppLogger when the user service fails', async () => {
+    mockUsersService.findOne.mockRejectedValue(new Error('Database connection lost'));
+
+    const override = await resolveOverride({ user: { id: 'user-err' } });
+
+    expect(override).toBeNull();
+    expect(mockAppLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to fetch rate limit config for user user-err'),
+      'MerchantThrottlerGuard',
+    );
   });
 
   it('only overrides the default throttler bucket, not named buckets like auth', async () => {

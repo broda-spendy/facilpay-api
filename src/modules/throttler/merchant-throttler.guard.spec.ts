@@ -6,11 +6,22 @@ import { Controller, Post, Get, HttpCode } from '@nestjs/common';
 import { MerchantThrottlerGuard } from './merchant-throttler.guard';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/user.entity';
+import { AppLogger } from '../logger/logger.service';
 import request from 'supertest';
 
 // Mock UsersService
 const mockUsersService = {
   findOne: jest.fn(),
+};
+
+// Mock AppLogger
+const mockAppLogger = {
+  log: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+  verbose: jest.fn(),
+  child: jest.fn().mockReturnThis(),
 };
 
 // Test controller
@@ -52,17 +63,20 @@ describe('MerchantThrottlerGuard', () => {
           },
         ]),
       ],
-      controllers: [TestController],
-      providers: [
-        {
-          provide: UsersService,
-          useValue: mockUsersService,
-        },
-        {
-          provide: APP_GUARD,
-          useClass: MerchantThrottlerGuard,
-        },
-      ],
+      controllers: [TestController],        providers: [
+          {
+            provide: UsersService,
+            useValue: mockUsersService,
+          },
+          {
+            provide: AppLogger,
+            useValue: mockAppLogger,
+          },
+          {
+            provide: APP_GUARD,
+            useClass: MerchantThrottlerGuard,
+          },
+        ],
     }).compile();
 
     app = moduleFixture.createNestApplication();

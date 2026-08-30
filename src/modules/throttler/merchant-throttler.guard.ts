@@ -11,6 +11,7 @@ import type {
   ThrottlerStorage,
 } from '@nestjs/throttler';
 import { UsersService } from '../users/users.service';
+import { AppLogger } from '../logger/logger.service';
 
 interface RateLimitOverride {
   limit: number;
@@ -24,6 +25,7 @@ export class MerchantThrottlerGuard extends ThrottlerGuard {
     @InjectThrottlerStorage() storageService: ThrottlerStorage,
     reflector: Reflector,
     private readonly usersService: UsersService,
+    private readonly logger: AppLogger,
   ) {
     super(options, storageService, reflector);
   }
@@ -71,7 +73,10 @@ export class MerchantThrottlerGuard extends ThrottlerGuard {
       }
     } catch (error) {
       // If we can't fetch user config, fall back to global defaults
-      console.warn(`Failed to fetch rate limit config for user ${userId}:`, error);
+      this.logger.warn(
+        `Failed to fetch rate limit config for user ${userId}: ${error instanceof Error ? error.message : String(error)}`,
+        'MerchantThrottlerGuard',
+      );
     }
 
     return null;
