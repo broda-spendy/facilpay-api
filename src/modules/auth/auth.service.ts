@@ -42,6 +42,12 @@ import { AuditLogsService, RecordAuditLogParams } from '../audit-logs/audit-logs
 import { MailService } from './mail/mail.service';
 import { PasswordStrengthService } from './password-strength.service';
 import { CreateRoleDto } from './dto/create-role.dto';
+import { SessionsService } from '../sessions/sessions.service';
+
+export interface SessionMetadata {
+  ipAddress?: string;
+  userAgent?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -226,10 +232,16 @@ export class AuthService {
       }
     }
 
+    const session = await this.sessionsService.createSession(
+      user.id,
+      sessionMeta?.ipAddress,
+      sessionMeta?.userAgent,
+    );
+
     const payload = { sub: user.id, email: user.email, roles: user.roles };
     const [access_token, refresh_token] = await Promise.all([
       this.jwtService.signAsync(payload),
-      this.generateRefreshToken(user.id),
+      this.generateRefreshToken(user.id, undefined, session.id),
     ]);
 
     const userWithoutPassword = this.sanitizeUser(user);
@@ -342,10 +354,39 @@ export class AuthService {
       throw new BadRequestException('Two-factor authentication is not enabled');
     }
 
+    // Check account lockout — same protection as the login path
+    if (this.usersService.isAccountLocked(user)) {
+      const secondsUntilUnlock = this.usersService.getSecondsUntilUnlock(user);
+      const error: any = new HttpException(
+        {
+          statusCode: 423,
+          message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+          error: 'Locked',
+        },
+        HttpStatus.LOCKED,
+      );
+      error.getResponse = () => ({
+        statusCode: 423,
+        message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+        error: 'Locked',
+      });
+      error.getStatus = () => 423;
+      throw error;
+    }
+
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
+      // Track failed attempt through the shared lockout counter
+      await this.usersService.incrementFailedLoginAttempts(
+        user.id,
+        this.maxFailedAttempts,
+        this.lockDurationMinutes,
+      );
       throw new UnauthorizedException('Invalid password');
     }
+
+    // Reset lockout counter on successful password verification
+    await this.usersService.resetFailedLoginAttempts(user.id);
 
     await this.usersService.disableTwoFactor(user.id);
 
@@ -498,6 +539,7 @@ export class AuthService {
 
   async refresh(
     rawToken: string,
+    sessionMeta?: SessionMetadata,
   ): Promise<{ access_token: string; refresh_token: string }> {
     const hashedToken = createHash('sha256').update(rawToken).digest('hex');
 
@@ -533,10 +575,28 @@ export class AuthService {
 
       await manager.update(RefreshToken, { id: tokenRecord.id }, { revoked: true });
 
+      let sessionId = tokenRecord.sessionId;
+      if (sessionId) {
+        const touched = await this.sessionsService.touchSession(
+          sessionId,
+          sessionMeta?.ipAddress,
+          sessionMeta?.userAgent,
+        );
+        if (!touched) sessionId = null;
+      }
+      if (!sessionId) {
+        const session = await this.sessionsService.createSession(
+          user.id,
+          sessionMeta?.ipAddress,
+          sessionMeta?.userAgent,
+        );
+        sessionId = session.id;
+      }
+
       const payload = { sub: user.id, email: user.email, roles: user.roles };
       const [access_token, refresh_token] = await Promise.all([
         this.jwtService.signAsync(payload),
-        this.generateRefreshToken(user.id, manager),
+        this.generateRefreshToken(user.id, manager, sessionId),
       ]);
 
       return { access_token, refresh_token };
@@ -564,6 +624,7 @@ export class AuthService {
   private async generateRefreshToken(
     userId: string,
     manager?: EntityManager,
+    sessionId?: string | null,
   ): Promise<string> {
     const rawToken = randomUUID();
     const hashedToken = createHash('sha256').update(rawToken).digest('hex');
@@ -575,7 +636,13 @@ export class AuthService {
       ? manager.getRepository(RefreshToken)
       : this.refreshTokenRepository;
 
-    await repo.save({ token: hashedToken, userId, expiresAt, revoked: false });
+    await repo.save({
+      token: hashedToken,
+      userId,
+      sessionId: sessionId ?? null,
+      expiresAt,
+      revoked: false,
+    });
 
     return rawToken;
   }

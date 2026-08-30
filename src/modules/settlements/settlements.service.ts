@@ -46,12 +46,11 @@ export class SettlementsService {
   }
 
   async upsertConfig(userId: string, dto: UpsertSettlementConfigDto): Promise<MerchantSettlementConfig> {
-    let config = await this.configRepo.findOneBy({ userId });
+    let config = await this.configRepo.findOneBy({ userId, currency: dto.currency });
     if (!config) {
       config = this.configRepo.create({ userId, ...dto });
     } else {
       config.schedule = dto.schedule;
-      config.currency = dto.currency;
     }
     return this.configRepo.save(config);
   }

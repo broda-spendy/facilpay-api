@@ -41,7 +41,7 @@ import {
 @ApiTags('users')
 @Controller('v1/users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @Post()
   @ApiOperation({
@@ -79,7 +79,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Update current user profile',
     description:
-      'Updates the authenticated user\'s profile. Supports updating display name and email. If email is changed, email verification is required.',
+      "Updates the authenticated user's profile. Supports updating display name, email, and password. If email is changed, email verification is required. Changing password requires the current password and invalidates all refresh tokens.",
   })
   @ApiBody({
     type: UpdateUserDto,
@@ -95,6 +95,10 @@ export class UsersController {
       updateBoth: {
         summary: 'Update both name and email',
         value: { name: 'Jane Doe', email: 'jane.new@example.com' },
+      },
+      updatePassword: {
+        summary: 'Update password (requires current password)',
+        value: { password: 'N3wP@ssw0rd!', currentPassword: 'Curr3nt@Pss!' },
       },
     },
   })
@@ -144,7 +148,8 @@ export class UsersController {
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Get current user profile',
-    description: 'Returns the authenticated user\'s profile. Password and 2FA secret are never included.',
+    description:
+      "Returns the authenticated user's profile. Password and 2FA secret are never included.",
   })
   @ApiOkResponse({
     description: 'Authenticated user profile.',
@@ -224,7 +229,8 @@ export class UsersController {
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Get a user by id',
-    description: 'Returns a single user by their id. Users can only view their own profile unless they are an admin.',
+    description:
+      'Returns a single user by their id. Users can only view their own profile unless they are an admin.',
   })
   @ApiParam({
     name: 'id',
@@ -261,7 +267,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Update a user',
     description:
-      'Updates user fields by id. Only provided fields will be changed. Returns the updated user. Users can only update their own profile unless they are an admin.',
+      'Updates user fields by id. Only provided fields will be changed. Supports updating display name, email, and password. Changing password requires the current password and invalidates all refresh tokens. Users can only update their own profile unless they are an admin.',
   })
   @ApiParam({
     name: 'id',
@@ -276,8 +282,8 @@ export class UsersController {
         value: { email: 'jane.new@example.com' },
       },
       updatePassword: {
-        summary: 'Update password only',
-        value: { password: 'N3wP@ssw0rd!' },
+        summary: 'Update password (requires current password)',
+        value: { password: 'N3wP@ssw0rd!', currentPassword: 'Curr3nt@Pss!' },
       },
     },
   })
@@ -298,6 +304,15 @@ export class UsersController {
       example: {
         statusCode: 403,
         message: 'Forbidden',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Current password is incorrect when changing password.',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Current password is incorrect',
       },
     },
   })
@@ -335,8 +350,17 @@ export class UsersController {
       },
     },
   })
-  remove(@Param('id') id: string, @CurrentUser() user: User, @Req() req: Request) {
-    return this.usersService.softDelete(id, user.id, req.ip, req.headers['user-agent']);
+  remove(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+    @Req() req: Request,
+  ) {
+    return this.usersService.softDelete(
+      id,
+      user.id,
+      req.ip,
+      req.headers['user-agent'],
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -350,7 +374,12 @@ export class UsersController {
     description: 'Account deleted successfully.',
   })
   async deleteSelf(@Req() req: Request) {
-    await this.usersService.softDelete(req.user.id, req.user.id, req.ip, req.headers['user-agent']);
+    await this.usersService.softDelete(
+      req.user.id,
+      req.user.id,
+      req.ip,
+      req.headers['user-agent'],
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -391,7 +420,11 @@ export class UsersController {
       },
     },
   })
-  async restore(@Param('id') id: string, @CurrentUser() user: User, @Req() req: Request) {
+  async restore(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+    @Req() req: Request,
+  ) {
     return this.usersService.restore(id);
   }
 
@@ -401,7 +434,8 @@ export class UsersController {
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Update user rate limit configuration',
-    description: 'Updates the rate limit configuration for a specific user. Admin only.',
+    description:
+      'Updates the rate limit configuration for a specific user. Admin only.',
   })
   @ApiParam({
     name: 'id',
