@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './user.entity';
@@ -23,21 +29,28 @@ export class UsersService {
     private readonly auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
-    this.logger = appLogger?.child({ module: UsersService.name }) ?? {
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
-      debug: () => undefined,
-    } as Logger;
+    this.logger =
+      appLogger?.child({ module: UsersService.name }) ??
+      ({
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
+      } as Logger);
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 
   async create(
     createUserDto: CreateUserDto,
   ): Promise<Omit<User, 'password' | 'twoFactorSecret'>> {
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const normalizedEmail = this.normalizeEmail(createUserDto.email);
 
     const user = this.userRepository.create({
-      email: createUserDto.email,
+      email: normalizedEmail,
       password: hashedPassword,
       roles: [UserRole.USER],
       isEmailVerified: false,
@@ -125,7 +138,7 @@ export class UsersService {
 
   async findByEmail(email: string): Promise<User | undefined> {
     return await this.userRepository.findOne({
-      where: { email, deletedAt: null },
+      where: { email: this.normalizeEmail(email), deletedAt: null },
     });
   }
 
@@ -160,9 +173,6 @@ export class UsersService {
           'Email is already taken by another account',
         );
       }
-      // Reset email verification if email is changed
-      user.email = updateUserDto.email;
-      user.isEmailVerified = false;
     }
 
     if (updateUserDto.name) {
@@ -329,7 +339,8 @@ export class UsersService {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
 
-    const wasLocked = !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
+    const wasLocked =
+      !!user.lockedUntil && new Date(user.lockedUntil) > new Date();
     user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
     user.updatedAt = new Date();
 
@@ -343,7 +354,10 @@ export class UsersService {
 
       if (this.mailService) {
         try {
-          await this.mailService.sendAccountLockedEmail(user.email, lockDurationMinutes);
+          await this.mailService.sendAccountLockedEmail(
+            user.email,
+            lockDurationMinutes,
+          );
         } catch (error) {
           this.logger.warn(
             { userId, email: user.email, error: error.message },

@@ -11,53 +11,88 @@ import {
 } from '@nestjs/common';
 import { UserRole } from '../../common/constants/roles';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 describe('UsersService', () => {
-    let service: UsersService;
-    let userRepository: any;
-    let refreshTokenRepository: any;
-    let appLogger: any;
+  let service: UsersService;
+  let userRepository: any;
+  let refreshTokenRepository: any;
+  let appLogger: any;
+  let auditLogsService: any;
 
-    beforeEach(async () => {
-        userRepository = {
-            create: jest.fn(),
-            save: jest.fn(),
-            findOne: jest.fn(),
-            find: jest.fn(),
-            remove: jest.fn(),
-            createQueryBuilder: jest.fn(() => ({
-                where: jest.fn().mockReturnThis(),
-                andWhere: jest.fn().mockReturnThis(),
-                orderBy: jest.fn().mockReturnThis(),
-                skip: jest.fn().mockReturnThis(),
-                take: jest.fn().mockReturnThis(),
-                getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
-            })),
-        };
+  beforeEach(async () => {
+    userRepository = {
+      create: jest.fn(),
+      save: jest.fn(),
+      findOne: jest.fn(),
+      find: jest.fn(),
+      remove: jest.fn(),
+      createQueryBuilder: jest.fn(() => ({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      })),
+    };
 
-        refreshTokenRepository = {
-            update: jest.fn(),
-        };
+    refreshTokenRepository = {
+      update: jest.fn(),
+    };
 
-        appLogger = {
-            child: jest.fn().mockReturnValue({
-                info: jest.fn(),
-                warn: jest.fn(),
-                error: jest.fn(),
-                debug: jest.fn(),
-            }),
-        };
+    appLogger = {
+      child: jest.fn().mockReturnValue({
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn(),
+      }),
+    };
 
-        const module: TestingModule = await Test.createTestingModule({
-            providers: [
-                UsersService,
-                { provide: getRepositoryToken(User), useValue: userRepository },
-                { provide: getRepositoryToken(RefreshToken), useValue: refreshTokenRepository },
-                { provide: AppLogger, useValue: appLogger },
-            ],
-        }).compile();
+    auditLogsService = {
+      record: jest.fn(),
+    };
 
-        service = module.get<UsersService>(UsersService);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UsersService,
+        { provide: getRepositoryToken(User), useValue: userRepository },
+        {
+          provide: getRepositoryToken(RefreshToken),
+          useValue: refreshTokenRepository,
+        },
+        { provide: AppLogger, useValue: appLogger },
+        { provide: AuditLogsService, useValue: auditLogsService },
+      ],
+    }).compile();
+
+    service = module.get<UsersService>(UsersService);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  describe('findOneWithAuth', () => {
+    it('should allow a user to view their own profile', async () => {
+      const user = new User();
+      user.id = 'user-1';
+      user.email = 'user@example.com';
+      user.password = 'hashedPassword';
+      user.roles = [UserRole.USER];
+
+      userRepository.findOne.mockResolvedValue(user);
+
+      const requestingUser = new User();
+      requestingUser.id = 'user-1';
+      requestingUser.roles = [UserRole.USER];
+
+      const result = await service.findOneWithAuth('user-1', requestingUser);
+
+      expect(result).toBeDefined();
+      expect(result.id).toBe('user-1');
+      expect(result).not.toHaveProperty('password');
     });
 
     it('should allow an admin to view any user profile', async () => {

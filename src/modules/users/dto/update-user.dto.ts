@@ -28,6 +28,9 @@ export class UpdateUserDto {
     example: 'jane.new@example.com',
   })
   @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail()
   email?: string;
 
