@@ -7,18 +7,34 @@ import {
   Min,
   MaxLength,
   IsPositive,
+  IsBoolean,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsISO4217CurrencyCode } from '../../../common/validators/is-iso4217-currency-code.validator';
 import { Type } from 'class-transformer';
 
 export class CreatePaymentLinkDto {
+  @ValidateIf((o) => !o.flexibleAmount)
   @IsNumber()
   @IsNotEmpty()
   @IsPositive({ message: 'Amount must be a positive number' })
   @Min(0.01, { message: 'Amount must be at least 0.01' })
-  @ApiProperty({ description: 'Payment amount', example: 50.0, minimum: 0.01 })
-  amount: number;
+  @ApiPropertyOptional({ description: 'Fixed payment amount (required when flexibleAmount is false)', example: 50.0, minimum: 0.01 })
+  amount?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  @ApiPropertyOptional({ description: 'Allow the payer to supply their own amount (e.g. donations)', example: true, default: false })
+  flexibleAmount?: boolean;
+
+  @ValidateIf((o) => o.flexibleAmount === true)
+  @IsNumber()
+  @IsOptional()
+  @IsPositive()
+  @Min(0.01)
+  @ApiPropertyOptional({ description: 'Minimum amount the payer must supply (only for flexibleAmount links)', example: 1.0 })
+  minAmount?: number;
 
   @IsString()
   @IsNotEmpty({ message: 'Currency is required' })

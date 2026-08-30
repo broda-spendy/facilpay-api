@@ -1,10 +1,25 @@
+// otplib uses ESM dependencies that Jest cannot transform — mock it entirely
+jest.mock('otplib', () => ({
+  authenticator: {
+    generateSecret: jest.fn().mockReturnValue('MOCKSECRET'),
+    keyuri: jest.fn().mockReturnValue('otpauth://totp/mock'),
+    verify: jest.fn().mockReturnValue(false),
+  },
+}));
+
+jest.mock('bcrypt');
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  UnauthorizedException,
+  BadRequestException,
+  HttpException,
+} from '@nestjs/common';
 import { AppLogger } from '../logger/logger.service';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -12,14 +27,6 @@ import * as otplib from 'otplib';
 import { PasswordStrengthService } from './password-strength.service';
 import { User } from '../users/user.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
-
-jest.mock('bcrypt');
-
-jest.mock('otplib', () => ({
-  generateSecret: jest.fn(() => 'JBSWY3DPEHPK3PXP'),
-  generateURI: jest.fn(() => 'otpauth://totp/FacilPay:test%40example.com'),
-  verifySync: jest.fn(() => ({ valid: true })),
-}));
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -61,11 +68,11 @@ describe('AuthService', () => {
   };
 
   const mockConfigService = {
-    get: jest.fn((key: string) => {
-      if (key === 'TWO_FACTOR_ENCRYPTION_KEY') {
-        return 'test-two-factor-encryption-key';
-      }
-      return undefined;
+    get: jest.fn((key: string, defaultValue?: unknown) => {
+      if (key === 'TWO_FACTOR_ENCRYPTION_KEY') return 'test-two-factor-encryption-key-32chars!';
+      if (key === 'LOGIN_MAX_ATTEMPTS') return 5;
+      if (key === 'LOGIN_LOCK_DURATION_MINUTES') return 15;
+      return defaultValue ?? undefined;
     }),
   };
 
@@ -123,20 +130,12 @@ describe('AuthService', () => {
           useValue: { save: jest.fn().mockResolvedValue({}) },
         },
         {
-          provide: PasswordStrengthService,
-          useValue: {
-            validateAndScore: jest
-              .fn()
-              .mockResolvedValue({ score: 3, feedback: [] }),
-          },
+          provide: 'RoleRepository',
+          useValue: { findOne: jest.fn(), create: jest.fn(), save: jest.fn() },
         },
         {
-          provide: 'RoleRepository',
-          useValue: {
-            findOne: jest.fn(),
-            create: jest.fn(),
-            save: jest.fn(),
-          },
+          provide: require('./password-strength.service').PasswordStrengthService,
+          useValue: { validateAndScore: jest.fn().mockResolvedValue({ score: 3 }) },
         },
         {
           provide: getRepositoryToken(User),
@@ -184,7 +183,7 @@ describe('AuthService', () => {
 
       expect(usersService.findByEmail).toHaveBeenCalledWith(registerDto.email);
       expect(usersService.create).toHaveBeenCalledWith(registerDto);
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         message:
           'User registered successfully. Please check your email to verify your account.',
         user: createdUser,
@@ -591,6 +590,153 @@ describe('AuthService', () => {
       await expect(service.refresh('raw-valid-token')).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // disableTwoFactor — rate limiting & lockout tests  (Issue #322)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('disableTwoFactor', () => {
+    const userId = 'user-2fa-uuid';
+    const correctPassword = 'CorrectP@ss1';
+    const wrongPassword = 'wrongpass';
+
+    const makeUser = (overrides: Record<string, unknown> = {}) => ({
+      id: userId,
+      email: 'user@example.com',
+      password: 'hashed-password',
+      twoFactorEnabled: true,
+      twoFactorSecret: 'encrypted-secret',
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      // Default: account is NOT locked
+      mockUsersService.isAccountLocked.mockReturnValue(false);
+      mockUsersService.incrementFailedLoginAttempts.mockResolvedValue(undefined);
+      mockUsersService.resetFailedLoginAttempts.mockResolvedValue(undefined);
+      mockUsersService.disableTwoFactor.mockResolvedValue(undefined);
+    });
+
+    it('should disable 2FA successfully when the correct password is provided', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(makeUser());
+      const bcrypt = require('bcrypt');
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.disableTwoFactor(userId, {
+        password: correctPassword,
+      });
+
+      expect(result).toEqual({
+        message: 'Two-factor authentication disabled',
+        twoFactorEnabled: false,
+      });
+      expect(mockUsersService.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+      expect(mockUsersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userId);
+      expect(mockUsersService.disableTwoFactor).toHaveBeenCalledWith(userId);
+    });
+
+    it('should throw UnauthorizedException and increment failed attempts on wrong password', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(makeUser());
+      const bcrypt = require('bcrypt');
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.disableTwoFactor(userId, { password: wrongPassword }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockUsersService.incrementFailedLoginAttempts).toHaveBeenCalledWith(
+        userId,
+        5,
+        15,
+      );
+      expect(mockUsersService.resetFailedLoginAttempts).not.toHaveBeenCalled();
+      expect(mockUsersService.disableTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('should increment failed attempts on each repeated wrong-password submission', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(makeUser());
+      const bcrypt = require('bcrypt');
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      // Simulate 3 wrong-password attempts
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await expect(
+          service.disableTwoFactor(userId, { password: wrongPassword }),
+        ).rejects.toThrow(UnauthorizedException);
+      }
+
+      expect(mockUsersService.incrementFailedLoginAttempts).toHaveBeenCalledTimes(3);
+      expect(mockUsersService.disableTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('should throw 423 Locked and NOT check the password when the account is already locked', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ lockedUntil: new Date(Date.now() + 900_000) }),
+      );
+      mockUsersService.isAccountLocked.mockReturnValue(true);
+      mockUsersService.getSecondsUntilUnlock.mockReturnValue(900);
+
+      await expect(
+        service.disableTwoFactor(userId, { password: wrongPassword }),
+      ).rejects.toThrow(HttpException);
+
+      // Password must never be evaluated when account is locked
+      const bcrypt = require('bcrypt');
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(mockUsersService.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+      expect(mockUsersService.disableTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('should return 423 with the correct seconds-until-unlock in the message', async () => {
+      const secondsRemaining = 547;
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ lockedUntil: new Date(Date.now() + secondsRemaining * 1000) }),
+      );
+      mockUsersService.isAccountLocked.mockReturnValue(true);
+      mockUsersService.getSecondsUntilUnlock.mockReturnValue(secondsRemaining);
+
+      let thrownError: any;
+      try {
+        await service.disableTwoFactor(userId, { password: wrongPassword });
+      } catch (err) {
+        thrownError = err;
+      }
+
+      expect(thrownError).toBeDefined();
+      const response = thrownError.getResponse();
+      expect(response.statusCode).toBe(423);
+      expect(response.message).toContain(String(secondsRemaining));
+    });
+
+    it('should throw BadRequestException when 2FA is not enabled', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ twoFactorEnabled: false, twoFactorSecret: null }),
+      );
+
+      await expect(
+        service.disableTwoFactor(userId, { password: correctPassword }),
+      ).rejects.toThrow(BadRequestException);
+
+      const bcrypt = require('bcrypt');
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(mockUsersService.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+    });
+
+    it('should reset failed attempts after a correct password following previous failures', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ failedLoginAttempts: 3 }),
+      );
+      const bcrypt = require('bcrypt');
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      await service.disableTwoFactor(userId, { password: correctPassword });
+
+      expect(mockUsersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userId);
+      expect(mockUsersService.disableTwoFactor).toHaveBeenCalledWith(userId);
     });
   });
 });

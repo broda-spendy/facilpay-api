@@ -28,6 +28,7 @@ import {
 import { PaymentLinksService } from './payment-links.service';
 import { CreatePaymentLinkDto } from './dto/create-payment-link.dto';
 import { UpdatePaymentLinkDto } from './dto/update-payment-link.dto';
+import { RedeemPaymentLinkDto } from './dto/redeem-payment-link.dto';
 import { PaymentLink } from './payment-link.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
@@ -65,6 +66,21 @@ export class PaymentLinksController {
   @ApiQuery({ name: 'order', required: false, enum: ['ASC', 'DESC'], description: 'Sort order' })
   findAll(@Query() pagination: PaginationDto, @Request() req: any) {
     return this.service.findAllByMerchant(req.user.id, pagination);
+  }
+
+  @Public()
+  @Post(':token/redeem')
+  @ApiOperation({
+    summary: 'Redeem a payment link',
+    description: 'Validates the link and, for flexible-amount links, requires a payer-supplied amount.',
+  })
+  @ApiParam({ name: 'token', description: '16-byte hex token from the payment link URL' })
+  @ApiOkResponse({ description: 'Payment link ready for checkout.' })
+  @ApiResponse({ status: 400, description: 'payerAmount missing or below minAmount on a flexible-amount link.' })
+  @ApiNotFoundResponse({ description: 'Link not found.' })
+  @ApiResponse({ status: 410, description: 'Link expired or deactivated.' })
+  redeemLink(@Param('token') token: string, @Body() dto: RedeemPaymentLinkDto) {
+    return this.service.redeemLink(token, dto.payerAmount);
   }
 
   @Public()

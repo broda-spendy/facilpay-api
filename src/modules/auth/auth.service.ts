@@ -30,6 +30,7 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
 import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
+import { StepUpDto, StepUpConfirmationDto } from './dto/step-up.dto';
 import { generateSecret, generateURI, verifySync } from 'otplib';
 import * as qrcode from 'qrcode';
 import { UsersService } from '../users/users.service';
@@ -40,7 +41,10 @@ import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Role } from './entities/role.entity';
 import { AuditLogsService, RecordAuditLogParams } from '../audit-logs/audit-logs.service';
 import { MailService } from './mail/mail.service';
-import { PasswordHistoryService } from './password-history.service';
+import { PasswordStrengthService } from './password-strength.service';
+import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
+import { SessionsService } from '../sessions/sessions.service';
 
 export interface SessionMetadata {
   ipAddress?: string;
@@ -71,6 +75,7 @@ export class AuthService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private auditLogsService: AuditLogsService,
+    private sessionsService: SessionsService,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child({ module: AuthService.name });
@@ -353,10 +358,39 @@ export class AuthService {
       throw new BadRequestException('Two-factor authentication is not enabled');
     }
 
+    // Check account lockout — same protection as the login path
+    if (this.usersService.isAccountLocked(user)) {
+      const secondsUntilUnlock = this.usersService.getSecondsUntilUnlock(user);
+      const error: any = new HttpException(
+        {
+          statusCode: 423,
+          message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+          error: 'Locked',
+        },
+        HttpStatus.LOCKED,
+      );
+      error.getResponse = () => ({
+        statusCode: 423,
+        message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+        error: 'Locked',
+      });
+      error.getStatus = () => 423;
+      throw error;
+    }
+
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
+      // Track failed attempt through the shared lockout counter
+      await this.usersService.incrementFailedLoginAttempts(
+        user.id,
+        this.maxFailedAttempts,
+        this.lockDurationMinutes,
+      );
       throw new UnauthorizedException('Invalid password');
     }
+
+    // Reset lockout counter on successful password verification
+    await this.usersService.resetFailedLoginAttempts(user.id);
 
     await this.usersService.disableTwoFactor(user.id);
 
@@ -374,6 +408,83 @@ export class AuthService {
     return {
       message: 'Two-factor authentication disabled',
       twoFactorEnabled: false,
+    };
+  }
+
+  /**
+   * Perform step-up re-authentication to verify identity before high-value operations.
+   * Validates password or TOTP code and returns a short-lived JWT token.
+   * Required before: creating/rotating admin-scope API keys, assigning high-privilege roles.
+   */
+  async stepUp(
+    userId: string,
+    dto: StepUpDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<StepUpConfirmationDto> {
+    const user = await this.usersService.findByIdWithSecrets(userId);
+
+    if (!dto.password && !dto.totpCode) {
+      throw new BadRequestException('Either password or totpCode is required');
+    }
+
+    // Validate password if provided
+    if (dto.password) {
+      const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+      if (!isPasswordValid) {
+        throw new UnauthorizedException('Invalid password');
+      }
+    }
+
+    // Validate TOTP code if provided
+    if (dto.totpCode) {
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        throw new BadRequestException('Two-factor authentication is not enabled');
+      }
+
+      const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
+      const isTotpValid = verifySync({
+        token: dto.totpCode,
+        secret,
+      }).valid;
+
+      if (!isTotpValid) {
+        throw new UnauthorizedException('Invalid two-factor code');
+      }
+    }
+
+    // Generate a short-lived step-up token (5 minutes)
+    const stepUpToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        purpose: 'step-up',
+        roles: user.roles,
+      },
+      { expiresIn: '5m' },
+    );
+
+    const expiresAt = new Date();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+
+    await this.auditLogsService.record({
+      actorId: user.id,
+      actorType: 'user',
+      action: 'auth.step_up.confirmed',
+      resourceType: 'user',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: {
+        email: user.email,
+        method: dto.password ? 'password' : 'totp',
+      },
+    });
+
+    return {
+      stepUpToken,
+      expiresAt: expiresAt.toISOString(),
+      message: 'Step-up authentication confirmed. This token is valid for 5 minutes.',
     };
   }
 
@@ -912,6 +1023,44 @@ export class AuthService {
 
     const role = this.roleRepository.create(dto);
     return this.roleRepository.save(role);
+  }
+
+  async updateRole(id: string, dto: UpdateRoleDto): Promise<Role> {
+    const role = await this.roleRepository.findOne({ where: { id } });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    // Check if trying to rename and another role with that name exists
+    if (dto.name && dto.name !== role.name) {
+      const existing = await this.roleRepository.findOne({ where: { name: dto.name } });
+      if (existing) {
+        throw new BadRequestException('Role with this name already exists');
+      }
+    }
+
+    if (dto.name !== undefined) role.name = dto.name;
+    if (dto.permissions !== undefined) role.permissions = dto.permissions;
+    if (dto.description !== undefined) role.description = dto.description;
+
+    return this.roleRepository.save(role);
+  }
+
+  async deleteRole(id: string): Promise<void> {
+    const role = await this.roleRepository.findOne({ where: { id } });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    // Check if any users have this role
+    const usersWithRole = await this.userRepository.count({ where: { roleId: id } });
+    if (usersWithRole > 0) {
+      throw new BadRequestException(
+        `Cannot delete role "${role.name}". ${usersWithRole} user(s) currently have this role assigned.`,
+      );
+    }
+
+    await this.roleRepository.remove(role);
   }
 
   async assignRole(

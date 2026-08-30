@@ -15,6 +15,7 @@ import { UpdateApiKeyDto } from './dto/update-api-key.dto';
 import { GetApiKeyUsageDto } from './dto/get-api-key-usage.dto';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { isIpAllowed } from '../merchants/ip-utils';
 
 @Injectable()
 export class ApiKeysService {
@@ -54,6 +55,7 @@ export class ApiKeysService {
       isActive: true,
       rateLimitLimit: dto.rateLimitLimit ?? null,
       rateLimitTtl: dto.rateLimitTtl ?? null,
+      allowedIps: dto.allowedIps ?? [],
     });
 
     const saved = await this.apiKeyRepository.save(apiKey);
@@ -85,6 +87,18 @@ export class ApiKeysService {
     });
   }
 
+  async findById(id: string, userId: string): Promise<ApiKey> {
+    const key = await this.apiKeyRepository.findOne({
+      where: { id, userId, isActive: true },
+    });
+
+    if (!key) {
+      throw new NotFoundException(`API key with ID ${id} not found`);
+    }
+
+    return key;
+  }
+
   async revoke(id: string, userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<void> {
     const key = await this.apiKeyRepository.findOne({ where: { id, userId } });
     if (!key) {
@@ -114,6 +128,7 @@ export class ApiKeysService {
     if (dto.scope !== undefined) key.scope = dto.scope;
     if (dto.rateLimitLimit !== undefined) key.rateLimitLimit = dto.rateLimitLimit;
     if (dto.rateLimitTtl !== undefined) key.rateLimitTtl = dto.rateLimitTtl;
+    if (dto.allowedIps !== undefined) key.allowedIps = dto.allowedIps;
     return this.apiKeyRepository.save(key);
   }
 
@@ -141,6 +156,7 @@ export class ApiKeysService {
       expiresAt: key.expiresAt,
       lastUsedAt: null,
       isActive: true,
+      allowedIps: key.allowedIps,
     });
     const saved = await this.apiKeyRepository.save(newKey);
 
@@ -165,7 +181,7 @@ export class ApiKeysService {
     return { apiKey: saved, plaintext };
   }
 
-  async validateKey(plaintext: string): Promise<ApiKey> {
+  async validateKey(plaintext: string, sourceIp?: string): Promise<ApiKey> {
     const keyHash = createHash('sha256').update(plaintext).digest('hex');
     const key = await this.apiKeyRepository.findOne({ where: { keyHash, isActive: true } });
 
@@ -175,6 +191,15 @@ export class ApiKeysService {
 
     if (key.expiresAt && key.expiresAt < new Date()) {
       throw new UnauthorizedException('API key has expired');
+    }
+
+    // Check IP allowlist if configured and source IP is available
+    if (sourceIp && key.allowedIps?.length > 0) {
+      if (!isIpAllowed(sourceIp, key.allowedIps)) {
+        throw new UnauthorizedException(
+          `API key access denied from IP ${sourceIp}. This key is restricted to specific IP ranges.`,
+        );
+      }
     }
 
     key.lastUsedAt = new Date();

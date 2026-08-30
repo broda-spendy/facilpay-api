@@ -101,6 +101,10 @@ export class HealthController {
             status: 'connected',
             message: 'Horizon SSE stream is active',
           },
+          queue: {
+            status: 'healthy',
+            message: 'Redis connection is healthy',
+          },
           system: {
             memory: {
               used: 536870912,
@@ -123,8 +127,8 @@ export class HealthController {
         uptime: 3600,
         services: {
           database: {
-            status: 'unhealthy',
-            message: 'Database connection failed',
+            status: 'healthy',
+            message: 'Database connection is healthy',
           },
           stellar: {
             status: 'healthy',
@@ -133,6 +137,10 @@ export class HealthController {
           horizonStream: {
             status: 'disconnected',
             message: 'Horizon SSE stream is not connected',
+          },
+          queue: {
+            status: 'unhealthy',
+            message: 'connect ECONNREFUSED 127.0.0.1:6379',
           },
           system: {
             memory: {

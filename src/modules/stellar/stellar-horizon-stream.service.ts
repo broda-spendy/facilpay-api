@@ -20,6 +20,11 @@ export class StellarHorizonStreamService implements OnModuleInit, OnModuleDestro
   private isDestroyed = false;
   private _connected = false;
 
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private currentDelayMs: number;
+  private failureCount = 0;
+
   constructor(
     private readonly configService: ConfigService,
     @InjectRepository(Payment)
@@ -31,6 +36,9 @@ export class StellarHorizonStreamService implements OnModuleInit, OnModuleDestro
     this.server = new StellarSdk.Horizon.Server(horizonUrl);
     this.merchantAccountId =
       this.configService.get<string>('STELLAR_MERCHANT_ACCOUNT_ID') || '';
+    this.baseDelayMs = this.configService.get<number>('STELLAR_RECONNECT_BASE_DELAY_MS', 1000);
+    this.maxDelayMs = this.configService.get<number>('STELLAR_RECONNECT_MAX_DELAY_MS', 60000);
+    this.currentDelayMs = this.baseDelayMs;
   }
 
   onModuleInit(): void {
@@ -77,6 +85,8 @@ export class StellarHorizonStreamService implements OnModuleInit, OnModuleDestro
 
       this.streamClose = close;
       this._connected = true;
+      this.failureCount = 0;
+      this.currentDelayMs = this.baseDelayMs;
       this.logger.log(
         `Horizon SSE stream started for account ${this.merchantAccountId}`,
       );
@@ -102,14 +112,18 @@ export class StellarHorizonStreamService implements OnModuleInit, OnModuleDestro
     this._connected = false;
   }
 
-  private scheduleReconnect(delayMs = 5000): void {
+  private scheduleReconnect(): void {
     if (this.isDestroyed) return;
+    const jitter = Math.random() * this.currentDelayMs;
+    const delay = Math.min(this.currentDelayMs + jitter, this.maxDelayMs);
+    this.failureCount += 1;
+    this.currentDelayMs = Math.min(this.baseDelayMs * 2 ** this.failureCount, this.maxDelayMs);
     this.reconnectTimer = setTimeout(() => {
       if (!this.isDestroyed) {
         this.logger.log('Reconnecting to Horizon SSE stream...');
         this.startStream();
       }
-    }, delayMs);
+    }, delay);
   }
 
   private async handleRecord(record: any): Promise<void> {

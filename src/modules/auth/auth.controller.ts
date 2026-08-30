@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Body,
   Query,
   Param,
@@ -26,6 +27,7 @@ import { VerifyEmailQueryDto } from './dto/verify-email-query.dto';
 import { TwoFactorCodeDto } from './dto/two-factor-code.dto';
 import { DisableTwoFactorDto } from './dto/disable-two-factor.dto';
 import { RegenerateBackupCodesDto } from './dto/regenerate-backup-codes.dto';
+import { StepUpDto, StepUpConfirmationDto } from './dto/step-up.dto';
 import { AuthThrottle } from '../throttler/throttler.decorator';
 import { Public } from './decorators/public.decorator';
 import { RolesGuard } from './roles.guard';
@@ -36,6 +38,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { User } from '../users/user.entity';
 import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import {
   ApiBody,
@@ -277,13 +280,17 @@ export class AuthController {
     return this.authService.verifyTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
+  @AuthThrottle()
   @Post('2fa/disable')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Disable two-factor authentication',
     description:
-      'Requires password confirmation and then removes the stored encrypted secret and disables 2FA.',
+      'Requires password confirmation and then removes the stored encrypted secret and disables 2FA. ' +
+      'Rate limited to 5 requests per 15 minutes. Wrong passwords are tracked against the account ' +
+      'lockout counter shared with the login endpoint — the account will be locked after the ' +
+      'configured number of failed attempts.',
   })
   @ApiBody({ type: DisableTwoFactorDto })
   @ApiOkResponse({
@@ -305,6 +312,26 @@ export class AuthController {
       },
     },
   })
+  @ApiResponse({
+    status: 423,
+    description: 'Account locked due to too many failed password attempts.',
+    schema: {
+      example: {
+        statusCode: 423,
+        message: 'Account is locked. Please try again in 900 seconds.',
+        error: 'Locked',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests. Rate limit exceeded.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+      },
+    },
+  })
   @ApiBadRequestResponse({
     description: 'Two-factor authentication is not enabled.',
   })
@@ -314,6 +341,47 @@ export class AuthController {
     @Req() req: Request,
   ) {
     return this.authService.disableTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
+  }
+
+  @Post('step-up')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Perform step-up authentication',
+    description:
+      'Re-authenticates the current user by verifying their password or TOTP code and returns a short-lived step-up token valid for 5 minutes. Required before sensitive operations like creating/rotating admin-scope API keys or assigning high-privilege roles.',
+  })
+  @ApiBody({ type: StepUpDto })
+  @ApiOkResponse({
+    description: 'Step-up authentication successful.',
+    type: StepUpConfirmationDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid password or TOTP code.',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid password',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Neither password nor TOTP code was provided.',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Either password or totpCode is required',
+        error: 'Bad Request',
+      },
+    },
+  })
+  async stepUp(
+    @CurrentUser() user: User,
+    @Body() dto: StepUpDto,
+    @Req() req: Request,
+  ): Promise<StepUpConfirmationDto> {
+    return this.authService.stepUp(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
   @Post('2fa/backup-codes/regenerate')
@@ -653,6 +721,59 @@ export class AuthController {
   })
   async createRole(@Body() dto: CreateRoleDto) {
     return this.authService.createRole(dto);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Patch('admin/roles/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a role (Admin only)',
+    description: 'Updates an existing role with new name, permissions, and/or description. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiBody({ type: UpdateRoleDto })
+  @ApiOkResponse({
+    description: 'Role updated successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid request or role with that name already exists.',
+  })
+  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    return this.authService.updateRole(id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Delete('admin/roles/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a role (Admin only)',
+    description: 'Deletes an existing role if no users currently have it assigned. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiNoContentResponse({
+    description: 'Role deleted successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'Cannot delete role with users assigned.',
+  })
+  async deleteRole(@Param('id') id: string) {
+    return this.authService.deleteRole(id);
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)

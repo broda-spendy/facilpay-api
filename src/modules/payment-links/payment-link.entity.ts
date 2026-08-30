@@ -16,8 +16,14 @@ export class PaymentLink {
   @Column({ length: 32 })
   token: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
-  amount: number;
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  amount: number | null;
+
+  @Column({ default: false })
+  flexibleAmount: boolean;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  minAmount: number | null;
 
   @Column({ length: 3 })
   currency: string;
