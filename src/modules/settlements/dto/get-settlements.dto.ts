@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsISO8601, IsOptional } from 'class-validator';
+import { IsISO8601, IsOptional, IsUUID } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class GetSettlementsDto extends PaginationDto {
@@ -20,4 +20,13 @@ export class GetSettlementsDto extends PaginationDto {
   @IsISO8601({}, { message: 'to must be a valid ISO 8601 date' })
   @IsOptional()
   to?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by merchant ID (admin-only) — filters by merchantId = merchantId',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsUUID('4', { message: 'merchantId must be a valid UUID' })
+  @IsOptional()
+  merchantId?: string;
 }

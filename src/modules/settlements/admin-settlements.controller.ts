@@ -26,8 +26,9 @@ export class AdminSettlementsController {
   @Get()
   @ApiOperation({
     summary: 'List all settlements (admin)',
-    description: 'Admin-only endpoint. Returns paginated settlements across all merchants with optional date filtering.',
+    description: 'Admin-only endpoint. Returns paginated settlements across all merchants with optional date filtering and optional merchant ID filtering.',
   })
+  @ApiQuery({ name: 'merchantId', required: false, description: 'Filter by merchant ID (UUID)' })
   @ApiQuery({ name: 'from', required: false, description: 'Start date filter (ISO 8601)' })
   @ApiQuery({ name: 'to', required: false, description: 'End date filter (ISO 8601)' })
   @ApiQuery({ name: 'page', required: false, description: 'Page number (default: 1)' })

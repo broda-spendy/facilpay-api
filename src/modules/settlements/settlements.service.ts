@@ -87,6 +87,10 @@ export class SettlementsService {
   ): Promise<PaginatedResult<Settlement>> {
     const query = this.settlementRepo.createQueryBuilder('settlement');
 
+    if (dto?.merchantId) {
+      query.where('settlement.merchantId = :merchantId', { merchantId: dto.merchantId });
+    }
+
     if (dto?.from) {
       query.andWhere('settlement.processedAt >= :fromDate', { fromDate: dto.from });
     }
