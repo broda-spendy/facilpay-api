@@ -6,6 +6,8 @@ import {
   IsPositive,
   IsString,
   MaxLength,
+  IsArray,
+  Matches,
 } from 'class-validator';
 import { ApiKeyScope } from '../api-key.entity';
 
@@ -42,4 +44,18 @@ export class UpdateApiKeyDto {
   @IsPositive()
   @IsOptional()
   rateLimitTtl?: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional list of allowed IP addresses or CIDR ranges (e.g. "192.168.1.0/24", "10.0.0.1")',
+    example: ['192.168.1.0/24', '10.0.0.1'],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @Matches(/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}(\/\d{1,3})?$/, {
+    each: true,
+    message: 'each value must be a valid IPv4/IPv6 address or CIDR range',
+  })
+  @IsOptional()
+  allowedIps?: string[];
 }
+
