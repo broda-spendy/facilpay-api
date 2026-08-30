@@ -19,6 +19,13 @@ export enum ApiKeyEnvironment {
   TEST = 'test',
 }
 
+/**
+ * Granular API Key Scopes (resource:action format)
+ * Examples: 'payments:read', 'payment-links:write', 'webhooks:admin'
+ * Backward compatible with legacy scope column
+ */
+export type GranularScope = string;
+
 @Entity('api_keys')
 export class ApiKey {
   @PrimaryGeneratedColumn('uuid')
@@ -40,9 +47,16 @@ export class ApiKey {
   @Column()
   userId: string;
 
-  @Column({ type: 'enum', enum: ApiKeyScope, default: ApiKeyScope.READ })
-  @ApiProperty({ enum: ApiKeyScope, example: ApiKeyScope.READ })
-  scope: ApiKeyScope;
+  @Column({ type: 'enum', enum: ApiKeyScope, default: ApiKeyScope.READ, nullable: true })
+  @ApiPropertyOptional({ enum: ApiKeyScope, example: ApiKeyScope.READ, description: 'Deprecated: use scopes instead' })
+  scope: ApiKeyScope | null;
+
+  @Column({ type: 'text', array: true, default: [] })
+  @ApiProperty({
+    example: ['payments:read', 'payment-links:write'],
+    description: 'Granular scopes in resource:action format. Examples: payments:read, payment-links:write, settlements:admin',
+  })
+  scopes: GranularScope[] = [];
 
   @Column({ type: 'enum', enum: ApiKeyEnvironment, default: ApiKeyEnvironment.LIVE })
   @ApiProperty({ enum: ApiKeyEnvironment, example: ApiKeyEnvironment.LIVE })

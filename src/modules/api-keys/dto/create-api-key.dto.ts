@@ -20,10 +20,20 @@ export class CreateApiKeyDto {
   @MaxLength(255)
   name: string;
 
-  @ApiPropertyOptional({ enum: ApiKeyScope, default: ApiKeyScope.READ })
+  @ApiPropertyOptional({ enum: ApiKeyScope, default: ApiKeyScope.READ, deprecated: true })
   @IsEnum(ApiKeyScope)
   @IsOptional()
   scope?: ApiKeyScope = ApiKeyScope.READ;
+
+  @ApiPropertyOptional({
+    description: 'Granular scopes in resource:action format (preferred over legacy scope)',
+    example: ['payments:read', 'payment-links:write'],
+    isArray: true,
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ValidateIf((o) => o.scopes !== undefined)
+  scopes?: string[];
 
   @ApiPropertyOptional({ enum: ApiKeyEnvironment, default: ApiKeyEnvironment.LIVE })
   @IsEnum(ApiKeyEnvironment)

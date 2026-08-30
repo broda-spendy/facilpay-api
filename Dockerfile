@@ -34,6 +34,12 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
 
+# Create non-root node user and set ownership of app directory
+RUN chown -R node:node /app
+
+# Switch to node user for running the application
+USER node
+
 EXPOSE 3000
 
 CMD ["node", "dist/main"]

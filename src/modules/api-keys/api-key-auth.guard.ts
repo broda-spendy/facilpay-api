@@ -3,10 +3,13 @@ import {
   ExecutionContext,
   Injectable,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Reflector } from '@nestjs/core';
 import { ApiKeysService } from './api-keys.service';
 import { extractClientIp, parseTrustedProxyList } from '../merchants/ip-utils';
+import { REQUIRE_SCOPE_KEY } from './decorators/require-scope.decorator';
 
 @Injectable()
 export class ApiKeyAuthGuard implements CanActivate {
@@ -14,6 +17,7 @@ export class ApiKeyAuthGuard implements CanActivate {
 
   constructor(
     private readonly apiKeysService: ApiKeysService,
+    private readonly reflector: Reflector,
     configService: ConfigService,
   ) {
     this.trustedProxies = parseTrustedProxyList(
@@ -33,6 +37,16 @@ export class ApiKeyAuthGuard implements CanActivate {
     request.apiKey = apiKey;
     request.user = { id: apiKey.userId };
 
+    // Check granular scopes if required
+    const requiredScopes = this.reflector.get<string[]>(
+      REQUIRE_SCOPE_KEY,
+      context.getHandler(),
+    );
+
+    if (requiredScopes && requiredScopes.length > 0) {
+      this.validateScopes(apiKey.scopes || [], requiredScopes);
+    }
+
     // Record usage asynchronously (don't await to avoid blocking the request)
     this.recordUsageAsync(
       apiKey.id,
@@ -44,6 +58,19 @@ export class ApiKeyAuthGuard implements CanActivate {
     );
 
     return true;
+  }
+
+  private validateScopes(grantedScopes: string[], requiredScopes: string[]): void {
+    // Check if key has at least one of the required scopes
+    const hasRequiredScope = requiredScopes.some((required) =>
+      grantedScopes.includes(required),
+    );
+
+    if (!hasRequiredScope) {
+      throw new ForbiddenException(
+        `API key does not have required scope(s): ${requiredScopes.join(', ')}`,
+      );
+    }
   }
 
   private extractKey(request: any): string | null {

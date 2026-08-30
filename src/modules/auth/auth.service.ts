@@ -65,6 +65,7 @@ export class AuthService {
     private configService: ConfigService,
     private dataSource: DataSource,
     private passwordStrengthService: PasswordStrengthService,
+    private passwordHistoryService: PasswordHistoryService,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
     @InjectRepository(PasswordResetToken)
@@ -947,7 +948,14 @@ export class AuthService {
     await this.passwordStrengthService.validateAndScore(resetPasswordDto.newPassword);
 
     const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+
+    // Check if new password matches any recent password in history
+    await this.passwordHistoryService.validatePasswordNotReused(user.id, hashedPassword);
+
     await this.usersService.updatePassword(user.id, hashedPassword);
+
+    // Record the new password in history after successful update
+    await this.passwordHistoryService.recordPasswordChange(user.id, hashedPassword);
 
     try {
       await this.mailService.sendPasswordChangedEmail(user.email);

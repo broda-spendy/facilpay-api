@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Repository, DataSource } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { Settlement } from './entities/settlement.entity';
@@ -32,6 +32,7 @@ export class SettlementsService {
     private readonly configRepo: Repository<MerchantSettlementConfig>,
     @InjectRepository(Payment)
     private readonly paymentRepo: Repository<Payment>,
+    private readonly dataSource: DataSource,
     private readonly mailService: MailService,
     private readonly usersService: UsersService,
     private readonly configService: ConfigService,
@@ -202,53 +203,84 @@ export class SettlementsService {
   private async processMerchantSettlement(
     config: MerchantSettlementConfig,
   ): Promise<Settlement | null> {
-    const since = config.lastSettledAt ?? new Date(0);
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    const completedPayments = await this.paymentRepo
-      .createQueryBuilder('p')
-      .where('p.status = :status', { status: PaymentStatus.COMPLETED })
-      .andWhere('p.merchantId = :merchantId', { merchantId: config.userId })
-      .andWhere('p.currency = :currency', { currency: config.currency })
-      .andWhere('p.updatedAt > :since', { since })
-      .getMany();
+    try {
+      // Acquire exclusive row lock on the config row to prevent concurrent settlement runs
+      const lockedConfig = await queryRunner.manager
+        .createQueryBuilder(MerchantSettlementConfig, 'config')
+        .setLock('pessimistic_write')
+        .where('config.id = :id', { id: config.id })
+        .getOne();
 
-    if (completedPayments.length === 0) return null;
+      if (!lockedConfig) {
+        await queryRunner.rollbackTransaction();
+        return null;
+      }
 
-    const totalAmount = completedPayments.reduce(
-      (sum, p) =>
-        sum +
-        Number(
-          this.settleOnGross
-            ? p.amount
-            : p.netAmount !== undefined && p.netAmount !== null
-              ? p.netAmount
-              : p.amount,
-        ),
-      0,
-    );
+      // Use the fresh config value with the lock acquired
+      const since = lockedConfig.lastSettledAt ?? new Date(0);
 
-    const settlement = this.settlementRepo.create({
-      merchantId: config.userId,
-      schedule: config.schedule,
-      totalAmount,
-      currency: config.currency,
-      paymentIds: completedPayments.map((p) => p.id),
-      processedAt: new Date(),
-    });
+      const completedPayments = await queryRunner.manager
+        .createQueryBuilder(Payment, 'p')
+        .where('p.status = :status', { status: PaymentStatus.COMPLETED })
+        .andWhere('p.merchantId = :merchantId', { merchantId: lockedConfig.userId })
+        .andWhere('p.currency = :currency', { currency: lockedConfig.currency })
+        .andWhere('p.updatedAt > :since', { since })
+        .getMany();
 
-    await this.settlementRepo.save(settlement);
+      if (completedPayments.length === 0) {
+        await queryRunner.rollbackTransaction();
+        return null;
+      }
 
-    await this.paymentRepo.update(
-      { id: In(completedPayments.map((p) => p.id)) },
-      { settlementId: settlement.id },
-    );
+      const totalAmount = completedPayments.reduce(
+        (sum, p) =>
+          sum +
+          Number(
+            this.settleOnGross
+              ? p.amount
+              : p.netAmount !== undefined && p.netAmount !== null
+                ? p.netAmount
+                : p.amount,
+          ),
+        0,
+      );
 
-    config.lastSettledAt = new Date();
-    await this.configRepo.save(config);
+      const settlement = queryRunner.manager.create(Settlement, {
+        merchantId: lockedConfig.userId,
+        schedule: lockedConfig.schedule,
+        totalAmount,
+        currency: lockedConfig.currency,
+        paymentIds: completedPayments.map((p) => p.id),
+        processedAt: new Date(),
+      });
 
-    await this.sendSettlementEmail(config.userId, settlement, totalAmount);
+      const savedSettlement = await queryRunner.manager.save(settlement);
 
-    return settlement;
+      await queryRunner.manager.update(
+        Payment,
+        { id: In(completedPayments.map((p) => p.id)) },
+        { settlementId: savedSettlement.id },
+      );
+
+      lockedConfig.lastSettledAt = new Date();
+      await queryRunner.manager.save(lockedConfig);
+
+      await queryRunner.commitTransaction();
+
+      // Send email outside the transaction (non-critical operation)
+      await this.sendSettlementEmail(lockedConfig.userId, savedSettlement, totalAmount);
+
+      return savedSettlement;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   private async sendSettlementEmail(
