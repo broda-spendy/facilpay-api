@@ -277,13 +277,17 @@ export class AuthController {
     return this.authService.verifyTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
   }
 
+  @AuthThrottle()
   @Post('2fa/disable')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Disable two-factor authentication',
     description:
-      'Requires password confirmation and then removes the stored encrypted secret and disables 2FA.',
+      'Requires password confirmation and then removes the stored encrypted secret and disables 2FA. ' +
+      'Rate limited to 5 requests per 15 minutes. Wrong passwords are tracked against the account ' +
+      'lockout counter shared with the login endpoint — the account will be locked after the ' +
+      'configured number of failed attempts.',
   })
   @ApiBody({ type: DisableTwoFactorDto })
   @ApiOkResponse({
@@ -302,6 +306,26 @@ export class AuthController {
         statusCode: 401,
         message: 'Invalid password',
         error: 'Unauthorized',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 423,
+    description: 'Account locked due to too many failed password attempts.',
+    schema: {
+      example: {
+        statusCode: 423,
+        message: 'Account is locked. Please try again in 900 seconds.',
+        error: 'Locked',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests. Rate limit exceeded.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
       },
     },
   })
