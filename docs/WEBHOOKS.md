@@ -17,6 +17,8 @@ All webhook management endpoints live under `/v1/webhooks` and require a valid J
 | `payment.split_processed`| A split payment is processed                 |
 | `refund.issued`          | A full or partial refund is committed        |
 | `dispute.opened`         | A dispute is opened on a payment             |
+| `transaction.multisig_required`  | A multi-sig transaction is pending additional signatures (threshold not yet met) |
+| `transaction.multisig_completed`  | A multi-sig transaction has gathered all required signatures and been submitted   |
 
 ## Endpoint Management
 
@@ -409,3 +411,4 @@ Ownership is enforced at the service layer — merchants can only create, view, 
 | ---------- | -------------------- |
 | **ADMIN**  | Yes                  |
 | **USER**   | Yes                  |
+

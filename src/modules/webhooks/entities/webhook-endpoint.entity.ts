@@ -16,6 +16,8 @@ export const WEBHOOK_EVENT_TYPES = [
   'payment.split_processed',
   'refund.issued',
   'dispute.opened',
+  'transaction.multisig_required',
+  'transaction.multisig_completed',
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
@@ -58,3 +60,4 @@ export class WebhookEndpoint {
   @ApiPropertyOptional({ example: '2026-01-26T10:05:00.000Z' })
   updatedAt: Date;
 }
+
