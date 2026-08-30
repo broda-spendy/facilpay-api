@@ -76,6 +76,14 @@ export class ApiKey {
   })
   rateLimitTtl: number | null;
 
+  @Column({ type: 'text', array: true, default: '{}' })
+  @ApiPropertyOptional({
+    description:
+      'Optional list of allowed IP addresses or CIDR ranges. An empty array means no restriction (all IPs allowed).',
+    example: ['192.168.1.0/24', '10.0.0.1'],
+  })
+  allowedIps: string[];
+
   @CreateDateColumn()
   @ApiProperty()
   createdAt: Date;

@@ -158,12 +158,21 @@ export class SettlementsService {
     }
   }
 
-  async triggerManualRun(): Promise<{
+  async triggerManualRun(merchantId?: string): Promise<{
     settlementsCreated: number;
     totalAmount: number;
     settlements: Settlement[];
   }> {
-    const configs = await this.configRepo.find();
+    let configs: MerchantSettlementConfig[];
+
+    if (merchantId) {
+      // If merchantId is provided, process only that merchant's configs
+      configs = await this.configRepo.find({ where: { userId: merchantId } });
+    } else {
+      // Otherwise, process all configs
+      configs = await this.configRepo.find();
+    }
+
     const settlements: Settlement[] = [];
 
     for (const config of configs) {

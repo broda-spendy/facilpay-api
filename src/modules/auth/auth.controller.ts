@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Delete,
   Body,
   Query,
   Param,
@@ -37,6 +38,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { User } from '../users/user.entity';
 import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import {
   ApiBody,
@@ -719,6 +721,59 @@ export class AuthController {
   })
   async createRole(@Body() dto: CreateRoleDto) {
     return this.authService.createRole(dto);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Patch('admin/roles/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a role (Admin only)',
+    description: 'Updates an existing role with new name, permissions, and/or description. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiBody({ type: UpdateRoleDto })
+  @ApiOkResponse({
+    description: 'Role updated successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid request or role with that name already exists.',
+  })
+  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    return this.authService.updateRole(id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('manage_roles')
+  @Delete('admin/roles/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a role (Admin only)',
+    description: 'Deletes an existing role if no users currently have it assigned. Requires manage_roles permission.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  @ApiNoContentResponse({
+    description: 'Role deleted successfully.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Insufficient permissions.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Role not found.',
+  })
+  @ApiBadRequestResponse({
+    description: 'Cannot delete role with users assigned.',
+  })
+  async deleteRole(@Param('id') id: string) {
+    return this.authService.deleteRole(id);
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)

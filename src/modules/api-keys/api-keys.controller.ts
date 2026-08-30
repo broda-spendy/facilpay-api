@@ -86,6 +86,30 @@ export class ApiKeysController {
     return this.apiKeysService.findAllForUser(user.id);
   }
 
+  @Get(':id')
+  @ApiOperation({
+    summary: 'Get a single API key by ID',
+    description:
+      'Fetches a single API key by its ID. The key hash is never returned. Only the owning user can fetch their own key metadata.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'API key UUID',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @ApiOkResponse({
+    description: 'API key metadata returned (key hash never included).',
+    type: ApiKey,
+  })
+  @ApiNotFoundResponse({ description: 'API key not found or does not belong to user.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid bearer token.' })
+  async findById(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ): Promise<ApiKey> {
+    return this.apiKeysService.findById(id, user.id);
+  }
+
   @Patch(':id')
   @ApiOperation({
     summary: "Update an API key's name, scope, and/or rate limit override",

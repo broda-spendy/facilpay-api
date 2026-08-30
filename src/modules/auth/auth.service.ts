@@ -43,6 +43,7 @@ import { AuditLogsService, RecordAuditLogParams } from '../audit-logs/audit-logs
 import { MailService } from './mail/mail.service';
 import { PasswordStrengthService } from './password-strength.service';
 import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { SessionsService } from '../sessions/sessions.service';
 
 export interface SessionMetadata {
@@ -1014,6 +1015,44 @@ export class AuthService {
 
     const role = this.roleRepository.create(dto);
     return this.roleRepository.save(role);
+  }
+
+  async updateRole(id: string, dto: UpdateRoleDto): Promise<Role> {
+    const role = await this.roleRepository.findOne({ where: { id } });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    // Check if trying to rename and another role with that name exists
+    if (dto.name && dto.name !== role.name) {
+      const existing = await this.roleRepository.findOne({ where: { name: dto.name } });
+      if (existing) {
+        throw new BadRequestException('Role with this name already exists');
+      }
+    }
+
+    if (dto.name !== undefined) role.name = dto.name;
+    if (dto.permissions !== undefined) role.permissions = dto.permissions;
+    if (dto.description !== undefined) role.description = dto.description;
+
+    return this.roleRepository.save(role);
+  }
+
+  async deleteRole(id: string): Promise<void> {
+    const role = await this.roleRepository.findOne({ where: { id } });
+    if (!role) {
+      throw new NotFoundException(`Role with ID ${id} not found`);
+    }
+
+    // Check if any users have this role
+    const usersWithRole = await this.userRepository.count({ where: { roleId: id } });
+    if (usersWithRole > 0) {
+      throw new BadRequestException(
+        `Cannot delete role "${role.name}". ${usersWithRole} user(s) currently have this role assigned.`,
+      );
+    }
+
+    await this.roleRepository.remove(role);
   }
 
   async assignRole(
