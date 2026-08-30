@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   GoneException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -21,9 +22,15 @@ export class PaymentLinksService {
   ) {}
 
   async create(dto: CreatePaymentLinkDto, merchantId: string): Promise<PaymentLink> {
+    if (!dto.flexibleAmount && (dto.amount === undefined || dto.amount === null)) {
+      throw new BadRequestException('amount is required when flexibleAmount is not true');
+    }
     const token = randomBytes(16).toString('hex');
     const link = this.repo.create({
       ...dto,
+      amount: dto.flexibleAmount ? null : dto.amount,
+      flexibleAmount: dto.flexibleAmount ?? false,
+      minAmount: dto.minAmount ?? null,
       token,
       merchantId,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
@@ -40,6 +47,21 @@ export class PaymentLinksService {
     }
     await this.repo.increment({ token }, 'views', 1);
     link.views += 1;
+    return link;
+  }
+
+  async redeemLink(token: string, payerAmount?: number): Promise<PaymentLink> {
+    const link = await this.findByToken(token);
+    if (link.flexibleAmount) {
+      if (payerAmount === undefined || payerAmount === null) {
+        throw new BadRequestException('payerAmount is required for flexible-amount payment links');
+      }
+      if (link.minAmount !== null && payerAmount < Number(link.minAmount)) {
+        throw new BadRequestException(
+          `payerAmount must be at least ${link.minAmount}`,
+        );
+      }
+    }
     return link;
   }
 
