@@ -46,6 +46,15 @@ export class HealthService {
     this.logger = appLogger.child({ module: HealthService.name });
   }
 
+  liveness(): { status: 'ok'; statusCode: 200; timestamp: string; uptime: number } {
+    return {
+      status: 'ok',
+      statusCode: 200,
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+    };
+  }
+
   async check(): Promise<HealthCheckResult> {
     const dbStatus = await this.checkDatabase();
     const stellarStatus = await this.checkStellarNetwork();

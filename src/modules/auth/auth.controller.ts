@@ -8,6 +8,7 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Req,
   Res,
   UseGuards,
   Req,
@@ -195,6 +196,7 @@ export class AuthController {
   })
   async login(
     @Body() loginDto: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Req() req: Request,
   ) {
@@ -446,8 +448,11 @@ export class AuthController {
       },
     },
   })
-  async refresh(@Body() dto: RefreshTokenDto) {
-    return this.authService.refresh(dto.refresh_token);
+  async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
+    return this.authService.refresh(dto.refresh_token, {
+      ipAddress: extractClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
   }
 
   @Public()
