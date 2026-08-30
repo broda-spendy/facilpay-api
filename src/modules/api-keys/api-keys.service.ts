@@ -47,6 +47,7 @@ export class ApiKeysService {
       keyPrefix,
       userId,
       scope: dto.scope ?? ApiKeyScope.READ,
+      scopes: dto.scopes || [],
       environment,
       expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
       lastUsedAt: null,
@@ -68,6 +69,7 @@ export class ApiKeysService {
       metadata: {
         name: dto.name,
         scope: dto.scope ?? ApiKeyScope.READ,
+        scopes: dto.scopes || [],
         environment,
         keyPrefix: saved.keyPrefix,
       },
@@ -134,6 +136,7 @@ export class ApiKeysService {
       keyPrefix: plaintext.slice(0, 12),
       userId,
       scope: key.scope,
+      scopes: key.scopes,
       environment: key.environment,
       expiresAt: key.expiresAt,
       lastUsedAt: null,
@@ -152,6 +155,7 @@ export class ApiKeysService {
       metadata: {
         name: key.name,
         scope: key.scope,
+        scopes: key.scopes,
         environment: key.environment,
         oldKeyPrefix: key.keyPrefix,
         newKeyPrefix: saved.keyPrefix,
