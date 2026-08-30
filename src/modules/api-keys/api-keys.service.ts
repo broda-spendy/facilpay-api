@@ -15,6 +15,7 @@ import { UpdateApiKeyDto } from './dto/update-api-key.dto';
 import { GetApiKeyUsageDto } from './dto/get-api-key-usage.dto';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { isIpAllowed } from '../merchants/ip-utils';
 
 @Injectable()
 export class ApiKeysService {
@@ -53,6 +54,7 @@ export class ApiKeysService {
       isActive: true,
       rateLimitLimit: dto.rateLimitLimit ?? null,
       rateLimitTtl: dto.rateLimitTtl ?? null,
+      allowedIps: dto.allowedIps ?? [],
     });
 
     const saved = await this.apiKeyRepository.save(apiKey);
@@ -81,6 +83,18 @@ export class ApiKeysService {
       where: { userId, isActive: true },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async findById(id: string, userId: string): Promise<ApiKey> {
+    const key = await this.apiKeyRepository.findOne({
+      where: { id, userId, isActive: true },
+    });
+
+    if (!key) {
+      throw new NotFoundException(`API key with ID ${id} not found`);
+    }
+
+    return key;
   }
 
   async revoke(id: string, userId: string, actorId?: string, ipAddress?: string, userAgent?: string): Promise<void> {
@@ -112,6 +126,7 @@ export class ApiKeysService {
     if (dto.scope !== undefined) key.scope = dto.scope;
     if (dto.rateLimitLimit !== undefined) key.rateLimitLimit = dto.rateLimitLimit;
     if (dto.rateLimitTtl !== undefined) key.rateLimitTtl = dto.rateLimitTtl;
+    if (dto.allowedIps !== undefined) key.allowedIps = dto.allowedIps;
     return this.apiKeyRepository.save(key);
   }
 
@@ -138,6 +153,7 @@ export class ApiKeysService {
       expiresAt: key.expiresAt,
       lastUsedAt: null,
       isActive: true,
+      allowedIps: key.allowedIps,
     });
     const saved = await this.apiKeyRepository.save(newKey);
 
