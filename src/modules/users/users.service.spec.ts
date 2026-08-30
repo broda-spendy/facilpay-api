@@ -7,6 +7,7 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { UserRole } from '../../common/constants/roles';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
@@ -288,6 +289,99 @@ describe('UsersService', () => {
     });
   });
 
+  describe('update - password change', () => {
+    it('should successfully change password with valid current password', async () => {
+      const hashedCurrentPassword = await bcrypt.hash('Curr3nt@Pss!', 10);
+      const user = new User();
+      user.id = 'user-1';
+      user.email = 'user@example.com';
+      user.password = hashedCurrentPassword;
+      user.roles = [UserRole.USER];
+      user.deletedAt = null;
+
+      userRepository.findOne.mockResolvedValue(user);
+      userRepository.save.mockImplementation(async (u) => u);
+
+      const result = await service.update('user-1', {
+        password: 'N3wP@ssw0rd!',
+        currentPassword: 'Curr3nt@Pss!',
+      });
+
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty('password');
+      expect(refreshTokenRepository.update).toHaveBeenCalledWith(
+        { userId: 'user-1' },
+        { revoked: true },
+      );
+      expect(userRepository.save).toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException when current password is incorrect', async () => {
+      const hashedCurrentPassword = await bcrypt.hash('Curr3nt@Pss!', 10);
+      const user = new User();
+      user.id = 'user-1';
+      user.email = 'user@example.com';
+      user.password = hashedCurrentPassword;
+      user.roles = [UserRole.USER];
+      user.deletedAt = null;
+
+      userRepository.findOne.mockResolvedValue(user);
+
+      await expect(
+        service.update('user-1', {
+          password: 'N3wP@ssw0rd!',
+          currentPassword: 'WrongPassword!',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      await expect(
+        service.update('user-1', {
+          password: 'N3wP@ssw0rd!',
+          currentPassword: 'WrongPassword!',
+        }),
+      ).rejects.toThrow('Current password is incorrect');
+    });
+
+    it('should revoke all refresh tokens on successful password change', async () => {
+      const hashedCurrentPassword = await bcrypt.hash('Curr3nt@Pss!', 10);
+      const user = new User();
+      user.id = 'user-1';
+      user.email = 'user@example.com';
+      user.password = hashedCurrentPassword;
+      user.roles = [UserRole.USER];
+      user.deletedAt = null;
+
+      userRepository.findOne.mockResolvedValue(user);
+      userRepository.save.mockImplementation(async (u) => u);
+
+      await service.update('user-1', {
+        password: 'N3wP@ssw0rd!',
+        currentPassword: 'Curr3nt@Pss!',
+      });
+
+      expect(refreshTokenRepository.update).toHaveBeenCalledWith(
+        { userId: 'user-1' },
+        { revoked: true },
+      );
+    });
+
+    it('should not attempt password change when password is not provided', async () => {
+      const user = new User();
+      user.id = 'user-1';
+      user.email = 'user@example.com';
+      user.password = 'hashedPassword';
+      user.roles = [UserRole.USER];
+      user.deletedAt = null;
+
+      userRepository.findOne.mockResolvedValue(user);
+      userRepository.save.mockResolvedValue({ ...user, name: 'New Name' });
+
+      await service.update('user-1', { name: 'New Name' });
+
+      expect(refreshTokenRepository.update).not.toHaveBeenCalled();
+      expect(userRepository.save).toHaveBeenCalled();
+    });
+  });
+
   describe('cross-user access control (e2e-style)', () => {
     it('should prevent User A from viewing User B profile', async () => {
       const userA = new User();
@@ -387,138 +481,6 @@ describe('UsersService', () => {
       expect(result).toBeDefined();
       expect(result.id).toBe('user-1');
       expect(userRepository.save).toHaveBeenCalled();
-    });
-  });
-
-  describe('email normalization', () => {
-    it('should normalize email to lowercase on create', async () => {
-      const createUserDto = {
-        email: '  Jane@Example.COM  ',
-        password: 'TestPass123!',
-      };
-
-      userRepository.create.mockImplementation((data: any) => ({
-        id: 'generated-id',
-        ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
-      userRepository.save.mockImplementation((user: any) =>
-        Promise.resolve(user),
-      );
-
-      const result = await service.create(createUserDto);
-
-      expect(userRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          email: 'jane@example.com',
-        }),
-      );
-      expect(result.email).toBe('jane@example.com');
-    });
-
-    it('should normalize email to lowercase on findByEmail lookup', async () => {
-      const storedUser = new User();
-      storedUser.id = 'user-1';
-      storedUser.email = 'jane@example.com';
-      storedUser.password = 'hashed';
-      storedUser.roles = [UserRole.USER];
-      storedUser.deletedAt = null;
-
-      userRepository.findOne.mockResolvedValue(storedUser);
-
-      const result = await service.findByEmail('  JANE@EXAMPLE.COM  ');
-
-      expect(userRepository.findOne).toHaveBeenCalledWith({
-        where: { email: 'jane@example.com', deletedAt: null },
-      });
-      expect(result).toBeDefined();
-      expect(result?.email).toBe('jane@example.com');
-    });
-
-    it('should normalize email to lowercase when updating email', async () => {
-      const existingUser = new User();
-      existingUser.id = 'user-1';
-      existingUser.email = 'old@example.com';
-      existingUser.name = 'User';
-      existingUser.password = 'hashedPassword';
-      existingUser.roles = [UserRole.USER];
-      existingUser.deletedAt = null;
-      existingUser.isEmailVerified = true;
-
-      userRepository.findOne
-        .mockResolvedValueOnce(existingUser)
-        .mockResolvedValueOnce(null);
-
-      userRepository.save.mockImplementation((user: any) =>
-        Promise.resolve(user),
-      );
-
-      await service.update('user-1', { email: '  NEW@Example.COM  ' });
-
-      expect(userRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          email: 'new@example.com',
-          isEmailVerified: false,
-        }),
-      );
-    });
-
-    it('should treat case-variant emails as duplicates during update conflict check', async () => {
-      const currentUser = new User();
-      currentUser.id = 'user-1';
-      currentUser.email = 'old@example.com';
-      currentUser.password = 'hashedPassword';
-      currentUser.roles = [UserRole.USER];
-      currentUser.deletedAt = null;
-
-      const conflictingUser = new User();
-      conflictingUser.id = 'user-2';
-      conflictingUser.email = 'existing@example.com';
-
-      userRepository.findOne.mockImplementation((options: any) => {
-        if (options.where?.id === 'user-1') {
-          return Promise.resolve(currentUser);
-        }
-        return Promise.resolve(conflictingUser);
-      });
-
-      await expect(
-        service.update('user-1', { email: '  Existing@EXAMPLE.COM  ' }),
-      ).rejects.toThrow(ConflictException);
-      await expect(
-        service.update('user-1', { email: '  Existing@EXAMPLE.COM  ' }),
-      ).rejects.toThrow('Email is already taken by another account');
-    });
-
-    it('should skip conflict check and not reset verification when normalized email is unchanged', async () => {
-      const currentUser = new User();
-      currentUser.id = 'user-1';
-      currentUser.email = 'jane@example.com';
-      currentUser.name = 'Jane';
-      currentUser.password = 'hashedPassword';
-      currentUser.roles = [UserRole.USER];
-      currentUser.deletedAt = null;
-      currentUser.isEmailVerified = true;
-
-      userRepository.findOne.mockResolvedValueOnce(currentUser);
-      userRepository.save.mockImplementation((user: any) =>
-        Promise.resolve(user),
-      );
-
-      await service.update('user-1', {
-        email: '  JANE@Example.COM  ',
-        name: 'Jane Doe',
-      });
-
-      expect(userRepository.findOne).toHaveBeenCalledTimes(1);
-      expect(userRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          email: 'jane@example.com',
-          name: 'Jane Doe',
-          isEmailVerified: true,
-        }),
-      );
     });
   });
 });

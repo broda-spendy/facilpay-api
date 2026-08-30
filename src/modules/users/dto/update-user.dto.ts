@@ -4,8 +4,10 @@ import {
   IsString,
   MinLength,
   MaxLength,
+  Matches,
+  ValidateIf,
+  IsNotEmpty,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateUserDto {
@@ -31,4 +33,34 @@ export class UpdateUserDto {
   )
   @IsEmail()
   email?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'New password (minimum 10 characters, must include uppercase, lowercase, number, and special character). Requires currentPassword.',
+    example: 'N3wP@ssw0rd!',
+    minLength: 10,
+    maxLength: 128,
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(10, { message: 'Password must be at least 10 characters long' })
+  @MaxLength(128, { message: 'Password must not exceed 128 characters' })
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9])/, {
+    message:
+      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
+  })
+  password?: string;
+
+  @ApiPropertyOptional({
+    description: 'Current password required when changing password.',
+    example: 'Curr3nt@Pss!',
+  })
+  @ValidateIf(
+    (o) => o.password !== undefined && o.password !== null && o.password !== '',
+  )
+  @IsNotEmpty({
+    message: 'currentPassword is required when password is provided',
+  })
+  @IsString()
+  currentPassword?: string;
 }

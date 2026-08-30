@@ -206,6 +206,15 @@ export class CreatePaymentDto {
   })
   expiresIn?: number;
 
+  @IsString()
+  @IsOptional()
+  @ApiPropertyOptional({
+    description:
+      'ID of the payment link this payment was created from, if any. Used to track the link\'s completion count.',
+    example: 'abc123-link-uuid',
+  })
+  paymentLinkId?: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'splits must contain at least one recipient' })
   @ValidateNested({ each: true })

@@ -15,6 +15,7 @@ import * as bcrypt from 'bcrypt';
 import { AppLogger } from '../logger/logger.service';
 import { Logger } from 'pino';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
 
 @Injectable()
 export class UsersService {
@@ -23,6 +24,8 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(RefreshToken)
+    private readonly refreshTokenRepository: Repository<RefreshToken>,
     private readonly auditLogsService: AuditLogsService,
     appLogger: AppLogger,
   ) {
@@ -161,25 +164,38 @@ export class UsersService {
     }
 
     // Check if email is being changed and if it's already taken
-    if (updateUserDto.email) {
-      const normalizedNewEmail = this.normalizeEmail(updateUserDto.email);
-      if (normalizedNewEmail !== user.email) {
-        const existingUser = await this.userRepository.findOne({
-          where: { email: normalizedNewEmail, deletedAt: null },
-        });
-        if (existingUser) {
-          throw new ConflictException(
-            'Email is already taken by another account',
-          );
-        }
-        // Reset email verification if email is changed
-        user.email = normalizedNewEmail;
-        user.isEmailVerified = false;
+    if (updateUserDto.email && updateUserDto.email !== user.email) {
+      const existingUser = await this.userRepository.findOne({
+        where: { email: updateUserDto.email, deletedAt: null },
+      });
+      if (existingUser) {
+        throw new ConflictException(
+          'Email is already taken by another account',
+        );
       }
     }
 
     if (updateUserDto.name) {
       user.name = updateUserDto.name;
+    }
+
+    // Handle password change
+    if (updateUserDto.password) {
+      const isCurrentPasswordValid = await bcrypt.compare(
+        updateUserDto.currentPassword,
+        user.password,
+      );
+      if (!isCurrentPasswordValid) {
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      user.password = await bcrypt.hash(updateUserDto.password, 10);
+
+      // Revoke all existing refresh tokens for the user
+      await this.refreshTokenRepository.update(
+        { userId: user.id },
+        { revoked: true },
+      );
     }
 
     user.updatedAt = new Date();

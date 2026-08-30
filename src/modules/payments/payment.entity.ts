@@ -82,6 +82,9 @@ export class Payment {
   @Column({ nullable: true })
   settlementId: string | null = null;
 
+  @Column({ nullable: true })
+  paymentLinkId: string | null = null;
+
   @CreateDateColumn()
   createdAt: Date;
 

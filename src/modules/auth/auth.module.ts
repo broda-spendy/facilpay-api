@@ -23,6 +23,7 @@ import { AuditLogsModule } from '../audit-logs/audit-logs.module';
     UsersModule,
     PassportModule,
     HttpModule,
+    SessionsModule,
     TypeOrmModule.forFeature([RefreshToken, PasswordResetToken, Role]),
     AuditLogsModule,
     JwtModule.registerAsync({
