@@ -40,9 +40,7 @@ import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Role } from './entities/role.entity';
 import { AuditLogsService, RecordAuditLogParams } from '../audit-logs/audit-logs.service';
 import { MailService } from './mail/mail.service';
-import { PasswordStrengthService } from './password-strength.service';
-import { CreateRoleDto } from './dto/create-role.dto';
-import { SessionsService } from '../sessions/sessions.service';
+import { PasswordHistoryService } from './password-history.service';
 
 export interface SessionMetadata {
   ipAddress?: string;
@@ -63,6 +61,7 @@ export class AuthService {
     private configService: ConfigService,
     private dataSource: DataSource,
     private passwordStrengthService: PasswordStrengthService,
+    private passwordHistoryService: PasswordHistoryService,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
     @InjectRepository(PasswordResetToken)
@@ -838,7 +837,14 @@ export class AuthService {
     await this.passwordStrengthService.validateAndScore(resetPasswordDto.newPassword);
 
     const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+
+    // Check if new password matches any recent password in history
+    await this.passwordHistoryService.validatePasswordNotReused(user.id, hashedPassword);
+
     await this.usersService.updatePassword(user.id, hashedPassword);
+
+    // Record the new password in history after successful update
+    await this.passwordHistoryService.recordPasswordChange(user.id, hashedPassword);
 
     try {
       await this.mailService.sendPasswordChangedEmail(user.email);
