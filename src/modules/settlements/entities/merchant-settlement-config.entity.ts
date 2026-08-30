@@ -14,11 +14,11 @@ export enum SettlementSchedule {
 }
 
 @Entity('merchant_settlement_configs')
+@Index(['userId', 'currency'], { unique: true })
 export class MerchantSettlementConfig {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index({ unique: true })
   @Column()
   userId: string;
 

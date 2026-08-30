@@ -162,6 +162,8 @@ If the authenticator app is unavailable, pass a backup code in the `twoFactorCod
 
 Each backup code is single-use and is permanently consumed on successful authentication.
 
+> **Note:** The failed-login-attempt counter (and the resulting account lockout) is only driven by wrong passwords. Failed-login attempts are reset as soon as the password check succeeds, before the 2FA code is checked, so an incorrect `twoFactorCode` or backup code never increments that counter — it simply returns `401 Invalid two-factor code`. A user who knows the correct password can retry `twoFactorCode` indefinitely without triggering a lockout.
+
 ---
 
 ## Disabling 2FA
