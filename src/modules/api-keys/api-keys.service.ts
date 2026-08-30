@@ -177,7 +177,7 @@ export class ApiKeysService {
     return { apiKey: saved, plaintext };
   }
 
-  async validateKey(plaintext: string): Promise<ApiKey> {
+  async validateKey(plaintext: string, sourceIp?: string): Promise<ApiKey> {
     const keyHash = createHash('sha256').update(plaintext).digest('hex');
     const key = await this.apiKeyRepository.findOne({ where: { keyHash, isActive: true } });
 
@@ -187,6 +187,15 @@ export class ApiKeysService {
 
     if (key.expiresAt && key.expiresAt < new Date()) {
       throw new UnauthorizedException('API key has expired');
+    }
+
+    // Check IP allowlist if configured and source IP is available
+    if (sourceIp && key.allowedIps?.length > 0) {
+      if (!isIpAllowed(sourceIp, key.allowedIps)) {
+        throw new UnauthorizedException(
+          `API key access denied from IP ${sourceIp}. This key is restricted to specific IP ranges.`,
+        );
+      }
     }
 
     key.lastUsedAt = new Date();
