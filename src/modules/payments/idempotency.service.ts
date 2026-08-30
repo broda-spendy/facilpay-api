@@ -1,6 +1,7 @@
 import { Injectable, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { IdempotencyKey } from './idempotency.entity';
@@ -146,9 +147,19 @@ export class IdempotencyService {
     await this.idempotencyRepository.delete({ key });
   }
 
+  /**
+   * Periodically cleans up expired idempotency keys to prevent unbounded table growth.
+   * Runs every hour to remove keys past their expiresAt timestamp.
+   * Mirrors the pattern used by PaymentsService.expirePendingPayments and ApiKeysService.pruneOldUsageRecords.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
   async cleanupExpired(): Promise<void> {
-    await this.idempotencyRepository.delete({
+    const result = await this.idempotencyRepository.delete({
       expiresAt: LessThan(new Date()),
     });
+
+    if (result.affected && result.affected > 0) {
+      console.log(`Cleaned up ${result.affected} expired idempotency keys`);
+    }
   }
 }
