@@ -30,7 +30,7 @@ import { RecurringPayment } from './recurring-payment.entity';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import { RecurringPaymentsController } from './recurring-payments.controller';
 import { MerchantFeesController } from './merchant-fees.controller';
-import { SettlementAdjustment } from '../settlements/entities/settlement-adjustment.entity';
+import { InvoiceService } from './invoice.service';
 
 @Module({
   imports: [
@@ -71,6 +71,7 @@ import { SettlementAdjustment } from '../settlements/entities/settlement-adjustm
     CurrencyConfigService,
     PaymentSseService,
     RecurringPaymentsService,
+    InvoiceService,
   ],
   exports: [
     PaymentsService,

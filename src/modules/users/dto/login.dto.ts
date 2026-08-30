@@ -7,9 +7,13 @@ import {
   MinLength,
   Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class LoginDto {
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty({ message: 'Email is required' })
   @MaxLength(255, { message: 'Email must not exceed 255 characters' })
@@ -31,7 +35,9 @@ export class LoginDto {
 
   @IsOptional()
   @IsString()
-  @Matches(/^(\d{6}|[a-zA-Z0-9]{8,10})$/, { message: 'Two-factor code must be 6 digits or a valid backup code' })
+  @Matches(/^(\d{6}|[a-zA-Z0-9]{8,10})$/, {
+    message: 'Two-factor code must be 6 digits or a valid backup code',
+  })
   @ApiPropertyOptional({
     description:
       'Six-digit authenticator app code or backup code. Required when 2FA is enabled.',
