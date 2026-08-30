@@ -44,7 +44,12 @@ export class AdminSettlementsController {
   @ApiOperation({
     summary: 'Manually trigger a settlement run',
     description:
-      'Admin-only endpoint. Triggers an out-of-band settlement run for all merchants with a configured settlement schedule, independent of the regular cron schedule. Returns a summary of the settlement batches created.',
+      'Admin-only endpoint. Triggers an out-of-band settlement run for all merchants with a configured settlement schedule (or a single merchant if merchantId is provided), independent of the regular cron schedule. Returns a summary of the settlement batches created.',
+  })
+  @ApiQuery({
+    name: 'merchantId',
+    required: false,
+    description: 'Optional merchant ID to restrict settlement run to a single merchant. If not provided, runs for all merchants.',
   })
   @ApiOkResponse({
     description: 'Settlement run summary.',
@@ -58,7 +63,7 @@ export class AdminSettlementsController {
   })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
   @ApiForbiddenResponse({ description: 'Admin role required.' })
-  runSettlements() {
-    return this.service.triggerManualRun();
+  runSettlements(@Query('merchantId') merchantId?: string) {
+    return this.service.triggerManualRun(merchantId);
   }
 }
