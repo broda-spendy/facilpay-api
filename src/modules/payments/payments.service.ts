@@ -1021,6 +1021,20 @@ export class PaymentsService {
     );
 
     this.paymentSseService.emit(updatedPayment);
+
+    if (updatedPayment.merchantId) {
+      await this.webhooksService
+        .dispatchEventToMerchant(updatedPayment.merchantId, 'payment.cancelled', {
+          paymentId: updatedPayment.id,
+          amount: updatedPayment.amount,
+          currency: updatedPayment.currency,
+          cancelledAt: updatedPayment.cancelledAt,
+        })
+        .catch((e) =>
+          this.logger.error('Failed to dispatch payment.cancelled webhook', e),
+        );
+    }
+
     return updatedPayment;
   }
 
