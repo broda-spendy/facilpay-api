@@ -77,7 +77,7 @@ Content-Type: application/json
 **Notes:**
 - Only one active dispute (non-terminal status) can exist per payment
 - Only payments with status `COMPLETED` or `PARTIALLY_REFUNDED` can be disputed
-- The `disputedAmount` is automatically calculated as the remaining refundable amount
+- The `disputedAmount` is only computed when a `description` is supplied in the request body — it is calculated as the remaining refundable amount (payment amount minus already refunded amount). Since `description` is optional, opening a dispute without one results in `disputedAmount: null` on the created dispute.
 
 ### 2. List Disputes
 
@@ -269,7 +269,7 @@ CREATE INDEX IDX_disputes_createdAt ON disputes("createdAt");
 2. **Active Dispute Limit**: Only one active dispute (non-terminal status) can exist per payment
 3. **Status Transitions**: Strict validation of status transitions to maintain workflow integrity
 4. **Automatic Timestamps**: `resolvedAt` and `closedAt` are automatically set when status changes to `resolved` or `closed`
-5. **Disputed Amount**: Automatically calculated as the remaining refundable amount (payment amount - already refunded amount)
+5. **Disputed Amount**: Only calculated as the remaining refundable amount (payment amount - already refunded amount) when a `description` is provided when opening the dispute; otherwise `disputedAmount` is `null`
 6. **Email Notifications**: Sent asynchronously via BullMQ queue with retry logic
 7. **Webhooks**: Dispatched to all registered merchant webhook endpoints
 

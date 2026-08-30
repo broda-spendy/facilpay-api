@@ -101,6 +101,15 @@ Merchants can override global limits by setting:
 - `rateLimitLimit`: Custom limit (e.g., 200 requests)
 - `rateLimitTtl`: Custom time window (e.g., 60000ms = 1 minute)
 
+### Per-API-Key Rate Limit Overrides
+
+In addition to the per-user override above, individual API keys can carry their own rate limit override. This is set on the `ApiKey` entity (`src/modules/api-keys/api-key.entity.ts`) via its `rateLimitLimit` and `rateLimitTtl` columns:
+
+- At creation, via `POST /v1/api-keys`
+- Later, via `PATCH /v1/api-keys/:id`
+
+When a request is authenticated with an API key that has `rateLimitLimit` set, `MerchantThrottlerGuard.resolveRateLimitOverride` (`src/modules/throttler/merchant-throttler.guard.ts`) applies that key's override and does not consult the user-level `rateLimitEnabled` config at all — **a per-key limit always takes precedence over the per-user override when both are set.** The per-user override is only considered when the authenticating API key (or JWT identity) has no key-level `rateLimitLimit`.
+
 ## Usage
 
 ### Enabling Custom Rate Limits for a Merchant

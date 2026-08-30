@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
@@ -9,6 +10,8 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as otplib from 'otplib';
 import { PasswordStrengthService } from './password-strength.service';
+import { User } from '../users/user.entity';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 jest.mock('bcrypt');
 
@@ -31,6 +34,12 @@ describe('AuthService', () => {
     setTwoFactorSecret: jest.fn(),
     enableTwoFactor: jest.fn(),
     disableTwoFactor: jest.fn(),
+    isAccountLocked: jest.fn().mockReturnValue(false),
+    resetFailedLoginAttempts: jest.fn().mockResolvedValue(undefined),
+    getSecondsUntilUnlock: jest.fn().mockReturnValue(0),
+    incrementFailedLoginAttempts: jest.fn().mockResolvedValue(1),
+    updateBackupCodes: jest.fn().mockResolvedValue(undefined),
+    consumeBackupCode: jest.fn().mockResolvedValue(false),
   };
 
   const mockJwtService = {
@@ -71,6 +80,10 @@ describe('AuthService', () => {
     transaction: jest.fn(<T>(cb: (manager: typeof mockManager) => Promise<T>) =>
       cb(mockManager),
     ),
+  };
+
+  const mockAuditLogsService = {
+    record: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -125,6 +138,17 @@ describe('AuthService', () => {
             save: jest.fn(),
           },
         },
+        {
+          provide: getRepositoryToken(User),
+          useValue: {
+            findOne: jest.fn(),
+            save: jest.fn(),
+          },
+        },
+        {
+          provide: AuditLogsService,
+          useValue: mockAuditLogsService,
+        },
       ],
     }).compile();
 
@@ -164,6 +188,7 @@ describe('AuthService', () => {
         message:
           'User registered successfully. Please check your email to verify your account.',
         user: createdUser,
+        passwordStrength: { score: 3 },
       });
     });
 
@@ -189,6 +214,32 @@ describe('AuthService', () => {
       await expect(service.register(registerDto)).rejects.toThrow(
         'User already exists',
       );
+      expect(usersService.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw User already exists when registering a case-variant duplicate', async () => {
+      const registerDto = {
+        email: '  Jane@Example.COM  ',
+        password: 'Password123!',
+      };
+
+      const existingUser = {
+        id: 'user-existing',
+        email: 'jane@example.com',
+        password: 'hashedpassword',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockUsersService.findByEmail.mockResolvedValue(existingUser);
+
+      await expect(service.register(registerDto)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(service.register(registerDto)).rejects.toThrow(
+        'User already exists',
+      );
+      expect(usersService.findByEmail).toHaveBeenCalledWith(registerDto.email);
       expect(usersService.create).not.toHaveBeenCalled();
     });
   });
@@ -281,6 +332,44 @@ describe('AuthService', () => {
         'Invalid credentials',
       );
       expect(jwtService.sign).not.toHaveBeenCalled();
+    });
+
+    it('should login successfully with case-variant email', async () => {
+      const loginDto = {
+        email: '  TEST@Example.COM  ',
+        password: 'password123',
+      };
+
+      const storedUser = {
+        id: '123',
+        email: 'test@example.com',
+        password: 'hashedpassword',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isEmailVerified: true,
+      };
+
+      mockUsersService.findByEmail.mockResolvedValue(storedUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      mockJwtService.sign.mockReturnValue('jwt-token-123');
+      mockJwtService.signAsync.mockResolvedValue('jwt-token-123');
+
+      const result = await service.login(loginDto);
+
+      expect(usersService.findByEmail).toHaveBeenCalledWith(loginDto.email);
+      expect(bcrypt.compare).toHaveBeenCalledWith(
+        loginDto.password,
+        storedUser.password,
+      );
+      expect(result).toMatchObject({
+        access_token: 'jwt-token-123',
+        refresh_token: expect.any(String),
+        user: expect.objectContaining({
+          id: storedUser.id,
+          email: storedUser.email,
+          isEmailVerified: true,
+        }),
+      });
     });
   });
 

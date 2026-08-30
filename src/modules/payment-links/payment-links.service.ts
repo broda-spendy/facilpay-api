@@ -43,6 +43,10 @@ export class PaymentLinksService {
     return link;
   }
 
+  async incrementCompletions(id: string): Promise<void> {
+    await this.repo.increment({ id }, 'completions', 1);
+  }
+
   async deactivate(id: string, merchantId: string): Promise<void> {
     const link = await this.repo.findOneBy({ id });
     if (!link) throw new NotFoundException('Payment link not found');
