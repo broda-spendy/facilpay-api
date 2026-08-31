@@ -120,10 +120,11 @@ describe('AuthController', () => {
 
       mockAuthService.login.mockResolvedValue(expectedResult);
 
+      const req = { ip: '127.0.0.1', headers: {} } as any;
       const response = { status: jest.fn() } as any;
-      const result = await controller.login(loginDto, response);
+      const result = await controller.login(loginDto, req, response);
 
-      expect(authService.login).toHaveBeenCalledWith(loginDto);
+      expect(authService.login).toHaveBeenCalledWith(loginDto, req.ip, undefined);
       expect(response.status).not.toHaveBeenCalled();
       expect(result).toEqual(expectedResult);
     });
@@ -133,6 +134,7 @@ describe('AuthController', () => {
         email: 'test@example.com',
         password: 'password123',
       };
+      const req = { ip: '127.0.0.1', headers: {} } as any;
       const response = { status: jest.fn() } as any;
       const expectedResult = {
         '2fa_required': true,
@@ -141,7 +143,7 @@ describe('AuthController', () => {
 
       mockAuthService.login.mockResolvedValue(expectedResult);
 
-      const result = await controller.login(loginDto, response);
+      const result = await controller.login(loginDto, req, response);
 
       expect(response.status).toHaveBeenCalledWith(202);
       expect(result).toEqual(expectedResult);
@@ -167,6 +169,8 @@ describe('AuthController', () => {
       expect(authService.disableTwoFactor).toHaveBeenCalledWith(
         mockUser.id,
         dto,
+        undefined,
+        undefined,
       );
       expect(result).toEqual(expectedResult);
     });
@@ -210,6 +214,50 @@ describe('AuthController', () => {
       await expect(
         controller.disableTwoFactor(mockUser, dto),
       ).rejects.toThrow(HttpException);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // verifyTwoFactor — throttle & delegation tests (Issue #320)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('verifyTwoFactor', () => {
+    it('should have @AuthThrottle metadata — confirming rate limiting is applied to this endpoint', () => {
+      const metaKeys: string[] = Reflect.getMetadataKeys(
+        AuthController.prototype.verifyTwoFactor,
+      );
+      expect(metaKeys).toContain('THROTTLER:TTLauth');
+      expect(metaKeys).toContain('THROTTLER:LIMITauth');
+    });
+
+    it('should call authService.verifyTwoFactor with the current user and dto', async () => {
+      const mockUser = { id: 'user-uuid', email: 'user@example.com' } as any;
+      const dto = { code: '123456' } as any;
+      const expectedResult = {
+        message: 'Two-factor authentication enabled',
+        twoFactorEnabled: true,
+      };
+      mockAuthService.verifyTwoFactor.mockResolvedValue(expectedResult);
+
+      const result = await controller.verifyTwoFactor(mockUser, dto, {} as any);
+
+      expect(authService.verifyTwoFactor).toHaveBeenCalledWith(
+        mockUser.id,
+        dto,
+        undefined,
+        undefined,
+      );
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should propagate UnauthorizedException for invalid code', async () => {
+      const mockUser = { id: 'user-uuid', email: 'user@example.com' } as any;
+      const dto = { code: '000000' } as any;
+      mockAuthService.verifyTwoFactor.mockRejectedValue(
+        new UnauthorizedException('Invalid two-factor code'),
+      );
+      await expect(controller.verifyTwoFactor(mockUser, dto, {} as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 });
