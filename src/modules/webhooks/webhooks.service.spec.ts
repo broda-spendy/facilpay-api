@@ -286,4 +286,128 @@ describe('WebhooksService', () => {
             expect(result).toBe(endpoint);
         });
     });
+
+
+    describe('multi-sig webhook event types', () => {
+        it('CreateWebhookEndpointDto accepts transaction.multisig_required as an event', async () => {
+            const dto = Object.assign(new CreateWebhookEndpointDto(), {
+                url: 'https://merchant.example.com/webhooks',
+                events: ['transaction.multisig_required'],
+            });
+            const errors = await validate(dto);
+            expect(errors).toHaveLength(0);
+        });
+
+        it('CreateWebhookEndpointDto accepts transaction.multisig_completed as an event', async () => {
+            const dto = Object.assign(new CreateWebhookEndpointDto(), {
+                url: 'https://merchant.example.com/webhooks',
+                events: ['transaction.multisig_completed'],
+            });
+            const errors = await validate(dto);
+            expect(errors).toHaveLength(0);
+        });
+
+        it('CreateWebhookEndpointDto rejects unknown transaction event types', async () => {
+            const dto = Object.assign(new CreateWebhookEndpointDto(), {
+                url: 'https://merchant.example.com/webhooks',
+                events: ['transaction.unknown_event'],
+            });
+            const errors = await validate(dto);
+            expect(errors).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ property: 'events' }),
+                ]),
+            );
+        });
+    });
+
+    describe('dispatchEventToMerchant with multi-sig events', () => {
+        it('delivers transaction.multisig_required to a subscribed endpoint', async () => {
+            const endpoint = new WebhookEndpoint();
+            endpoint.id = 'endpoint-1';
+            endpoint.merchantId = 'merchant-123';
+            endpoint.isActive = true;
+            endpoint.events = ['transaction.multisig_required'] as any;
+
+            endpointRepo.find.mockResolvedValue([endpoint]);
+            deliveryRepo.create.mockReturnValue({ id: 'delivery-1', status: null, payload: null, endpointId: 'endpoint-1' });
+            deliveryRepo.save.mockResolvedValue({ id: 'delivery-1' });
+
+            await service.dispatchEventToMerchant('merchant-123', 'transaction.multisig_required', {
+                transactionId: 'tx-1',
+                requiredSignatures: 2,
+                collectedSignatures: 1,
+            });
+
+            expect(deliveryRepo.create).toHaveBeenCalled();
+            expect(deliveryRepo.save).toHaveBeenCalled();
+            expect(webhooksQueue.add).toHaveBeenCalledWith(
+                'deliver',
+                expect.objectContaining({ endpointId: 'endpoint-1' }),
+                expect.any(Object),
+            );
+        });
+
+        it('delivers transaction.multisig_completed to a subscribed endpoint', async () => {
+            const endpoint = new WebhookEndpoint();
+            endpoint.id = 'endpoint-2';
+            endpoint.merchantId = 'merchant-456';
+            endpoint.isActive = true;
+            endpoint.events = ['transaction.multisig_completed'] as any;
+
+            endpointRepo.find.mockResolvedValue([endpoint]);
+            deliveryRepo.create.mockReturnValue({ id: 'delivery-2', status: null, payload: null, endpointId: 'endpoint-2' });
+            deliveryRepo.save.mockResolvedValue({ id: 'delivery-2' });
+
+            await service.dispatchEventToMerchant('merchant-456', 'transaction.multisig_completed', {
+                transactionId: 'tx-2',
+                hash: 'abc123hash',
+            });
+
+            expect(deliveryRepo.create).toHaveBeenCalled();
+            expect(deliveryRepo.save).toHaveBeenCalled();
+            expect(webhooksQueue.add).toHaveBeenCalledWith(
+                'deliver',
+                expect.objectContaining({ endpointId: 'endpoint-2' }),
+                expect.any(Object),
+            );
+        });
+
+        it('does not deliver transaction.multisig_required to an endpoint not subscribed to it', async () => {
+            const endpoint = new WebhookEndpoint();
+            endpoint.id = 'endpoint-3';
+            endpoint.merchantId = 'merchant-789';
+            endpoint.isActive = true;
+            endpoint.events = ['payment.created'] as any;
+
+            endpointRepo.find.mockResolvedValue([endpoint]);
+
+            await service.dispatchEventToMerchant('merchant-789', 'transaction.multisig_required', {
+                transactionId: 'tx-3',
+                requiredSignatures: 3,
+                collectedSignatures: 1,
+            });
+
+            expect(deliveryRepo.create).not.toHaveBeenCalled();
+            expect(webhooksQueue.add).not.toHaveBeenCalled();
+        });
+
+        it('does not deliver transaction.multisig_completed to an endpoint not subscribed to it', async () => {
+            const endpoint = new WebhookEndpoint();
+            endpoint.id = 'endpoint-4';
+            endpoint.merchantId = 'merchant-999';
+            endpoint.isActive = true;
+            endpoint.events = ['payment.completed', 'refund.issued'] as any;
+
+            endpointRepo.find.mockResolvedValue([endpoint]);
+
+            await service.dispatchEventToMerchant('merchant-999', 'transaction.multisig_completed', {
+                transactionId: 'tx-4',
+                hash: 'xyz789hash',
+            });
+
+            expect(deliveryRepo.create).not.toHaveBeenCalled();
+            expect(webhooksQueue.add).not.toHaveBeenCalled();
+        });
+    });
 });
