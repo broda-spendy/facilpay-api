@@ -5,6 +5,9 @@ jest.mock('otplib', () => ({
     keyuri: jest.fn().mockReturnValue('otpauth://totp/mock'),
     verify: jest.fn().mockReturnValue(false),
   },
+  generateSecret: jest.fn().mockReturnValue('MOCKSECRET'),
+  generateURI: jest.fn().mockReturnValue('otpauth://totp/mock'),
+  verifySync: jest.fn().mockReturnValue({ valid: false }),
 }));
 
 jest.mock('bcrypt');
@@ -15,6 +18,12 @@ import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { PasswordHistoryService } from './password-history.service';
+import { SessionsService } from '../sessions/sessions.service';
+import { RefreshToken } from './entities/refresh-token.entity';
+import { PasswordResetToken } from './entities/password-reset-token.entity';
+import { Role } from './entities/role.entity';
+import { User } from '../users/user.entity';
 import {
   UnauthorizedException,
   BadRequestException,
@@ -136,6 +145,32 @@ describe('AuthService', () => {
         {
           provide: require('./password-strength.service').PasswordStrengthService,
           useValue: { validateAndScore: jest.fn().mockResolvedValue({ score: 3 }) },
+        },
+        {
+          provide: PasswordHistoryService,
+          useValue: {
+            validatePasswordNotReused: jest.fn().mockResolvedValue(undefined),
+            recordPasswordChange: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: SessionsService,
+          useValue: {
+            createSession: jest.fn().mockResolvedValue({ id: 'sess-id' }),
+            touchSession: jest.fn().mockResolvedValue(true),
+          },
+        },
+        {
+          provide: getRepositoryToken(RefreshToken),
+          useValue: { save: jest.fn().mockResolvedValue({}), findOne: jest.fn(), update: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(PasswordResetToken),
+          useValue: { save: jest.fn().mockResolvedValue({}), findOne: jest.fn(), update: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(Role),
+          useValue: { findOne: jest.fn(), create: jest.fn(), save: jest.fn(), find: jest.fn() },
         },
         {
           provide: getRepositoryToken(User),
@@ -737,6 +772,118 @@ describe('AuthService', () => {
 
       expect(mockUsersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userId);
       expect(mockUsersService.disableTwoFactor).toHaveBeenCalledWith(userId);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // verifyTwoFactor — rate limiting & lockout tests (Issue #320)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('verifyTwoFactor', () => {
+    const userId = 'user-verify-uuid';
+    const validCode = '123456';
+    const invalidCode = '000000';
+
+    const makeUser = (overrides: Record<string, unknown> = {}) => ({
+      id: userId,
+      email: 'user@example.com',
+      twoFactorEnabled: false,
+      twoFactorSecret: 'encrypted-secret',
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      ...overrides,
+    });
+
+    const encrypt = (secret: string) =>
+      (
+        service as unknown as {
+          encryptTwoFactorSecret: (secret: string) => string;
+        }
+      ).encryptTwoFactorSecret(secret);
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockUsersService.isAccountLocked.mockReturnValue(false);
+      mockUsersService.incrementFailedLoginAttempts.mockResolvedValue(undefined);
+      mockUsersService.resetFailedLoginAttempts.mockResolvedValue(undefined);
+      mockUsersService.enableTwoFactor.mockResolvedValue(undefined);
+      // default mock for findByIdWithSecrets — will be overridden per test
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ twoFactorSecret: encrypt('JBSWY3DPEHPK3PXP') }),
+      );
+    });
+
+    it('should verify TOTP successfully and reset lockout counter', async () => {
+      const otplib = require('otplib');
+      (otplib.verifySync as jest.Mock).mockReturnValue({ valid: true });
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ twoFactorSecret: encrypt('JBSWY3DPEHPK3PXP') }),
+      );
+
+      const result = await service.verifyTwoFactor(userId, { code: validCode });
+
+      expect(result).toEqual({
+        message: 'Two-factor authentication enabled',
+        twoFactorEnabled: true,
+      });
+      expect(mockUsersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userId);
+      expect(mockUsersService.enableTwoFactor).toHaveBeenCalledWith(userId);
+      expect(mockUsersService.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+    });
+
+    it('should throw Unauthorized and increment counter on invalid TOTP', async () => {
+      const otplib = require('otplib');
+      (otplib.verifySync as jest.Mock).mockReturnValue({ valid: false });
+
+      await expect(
+        service.verifyTwoFactor(userId, { code: invalidCode }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockUsersService.incrementFailedLoginAttempts).toHaveBeenCalledWith(
+        userId,
+        5,
+        15,
+      );
+      expect(mockUsersService.enableTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('should increment failed attempts on each repeated invalid code', async () => {
+      const otplib = require('otplib');
+      (otplib.verifySync as jest.Mock).mockReturnValue({ valid: false });
+
+      for (let i = 0; i < 3; i++) {
+        await expect(
+          service.verifyTwoFactor(userId, { code: invalidCode }),
+        ).rejects.toThrow(UnauthorizedException);
+      }
+      expect(mockUsersService.incrementFailedLoginAttempts).toHaveBeenCalledTimes(3);
+    });
+
+    it('should throw 423 Locked and NOT verify TOTP when account is locked', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({
+          twoFactorSecret: encrypt('JBSWY3DPEHPK3PXP'),
+          lockedUntil: new Date(Date.now() + 900_000),
+        }),
+      );
+      mockUsersService.isAccountLocked.mockReturnValue(true);
+      mockUsersService.getSecondsUntilUnlock.mockReturnValue(900);
+
+      await expect(
+        service.verifyTwoFactor(userId, { code: validCode }),
+      ).rejects.toThrow(HttpException);
+
+      const otplib = require('otplib');
+      expect(otplib.verifySync).not.toHaveBeenCalled();
+      expect(mockUsersService.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequest when 2FA secret not set up', async () => {
+      mockUsersService.findByIdWithSecrets.mockResolvedValue(
+        makeUser({ twoFactorSecret: null }),
+      );
+      await expect(
+        service.verifyTwoFactor(userId, { code: validCode }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

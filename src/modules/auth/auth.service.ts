@@ -6,7 +6,6 @@ import {
   NotFoundException,
   HttpException,
   HttpStatus,
-  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -45,6 +44,7 @@ import { PasswordStrengthService } from './password-strength.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { SessionsService } from '../sessions/sessions.service';
+import { PasswordHistoryService } from './password-history.service';
 
 export interface SessionMetadata {
   ipAddress?: string;
@@ -238,8 +238,8 @@ export class AuthService {
 
     const session = await this.sessionsService.createSession(
       user.id,
-      sessionMeta?.ipAddress,
-      sessionMeta?.userAgent,
+      ipAddress,
+      userAgent,
     );
 
     const payload = { sub: user.id, email: user.email, roles: user.roles };
@@ -321,12 +321,38 @@ export class AuthService {
       throw new BadRequestException('Two-factor authentication is not set up');
     }
 
+    // Enforce account lockout — same protection as login/disableTwoFactor
+    if (this.usersService.isAccountLocked(user)) {
+      const secondsUntilUnlock = this.usersService.getSecondsUntilUnlock(user);
+      const error: any = new HttpException(
+        {
+          statusCode: 423,
+          message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+          error: 'Locked',
+        },
+        HttpStatus.LOCKED,
+      );
+      error.getResponse = () => ({
+        statusCode: 423,
+        message: `Account is locked. Please try again in ${secondsUntilUnlock} seconds.`,
+        error: 'Locked',
+      });
+      error.getStatus = () => 423;
+      throw error;
+    }
+
     const secret = this.decryptTwoFactorSecret(user.twoFactorSecret);
     const isValid = verifySync({ token: dto.code, secret }).valid;
     if (!isValid) {
+      await this.usersService.incrementFailedLoginAttempts(
+        user.id,
+        this.maxFailedAttempts,
+        this.lockDurationMinutes,
+      );
       throw new UnauthorizedException('Invalid two-factor code');
     }
 
+    await this.usersService.resetFailedLoginAttempts(user.id);
     await this.usersService.enableTwoFactor(user.id);
 
     await this.auditLogsService.record({
