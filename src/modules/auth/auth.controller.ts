@@ -12,7 +12,6 @@ import {
   Req,
   Res,
   UseGuards,
-  Req,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -201,15 +200,14 @@ export class AuthController {
     @Body() loginDto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-    @Req() req: Request,
   ) {
     const result = await this.authService.login(
       loginDto,
-      req.ip,
-      req.headers['user-agent'],
+      (req as any)?.ip,
+      (req as any)?.headers?.['user-agent'] as string | undefined,
     );
     if (result['2fa_required']) {
-      res.status(HttpStatus.ACCEPTED);
+      (res as any)?.status?.(HttpStatus.ACCEPTED);
     }
     return result;
   }
@@ -241,13 +239,14 @@ export class AuthController {
     return this.authService.enableTwoFactor(user.id, req.ip, req.headers['user-agent']);
   }
 
+  @AuthThrottle()
   @Post('2fa/verify')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Verify and activate two-factor authentication',
     description:
-      'Checks the current TOTP code from the authenticator app and turns 2FA on when valid.',
+      'Checks the current TOTP code from the authenticator app and turns 2FA on when valid. Rate limited to 5 requests per 15 minutes. Failed attempts are tracked against the account lockout counter — the account will be locked after the configured number of failed attempts.',
   })
   @ApiBody({ type: TwoFactorCodeDto })
   @ApiOkResponse({
@@ -272,12 +271,32 @@ export class AuthController {
   @ApiBadRequestResponse({
     description: 'Two-factor setup has not been started.',
   })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests. Rate limit exceeded.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 423,
+    description: 'Account locked due to too many failed verification attempts.',
+    schema: {
+      example: {
+        statusCode: 423,
+        message: 'Account is locked. Please try again in 900 seconds.',
+        error: 'Locked',
+      },
+    },
+  })
   async verifyTwoFactor(
     @CurrentUser() user: User,
     @Body() dto: TwoFactorCodeDto,
     @Req() req: Request,
   ) {
-    return this.authService.verifyTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
+    return this.authService.verifyTwoFactor(user.id, dto, req?.ip, req?.headers?.['user-agent'] as string | undefined);
   }
 
   @AuthThrottle()
@@ -340,7 +359,7 @@ export class AuthController {
     @Body() dto: DisableTwoFactorDto,
     @Req() req: Request,
   ) {
-    return this.authService.disableTwoFactor(user.id, dto, req.ip, req.headers['user-agent']);
+    return this.authService.disableTwoFactor(user.id, dto, req?.ip, req?.headers?.['user-agent'] as string | undefined);
   }
 
   @Post('step-up')
