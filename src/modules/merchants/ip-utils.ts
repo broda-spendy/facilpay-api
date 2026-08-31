@@ -12,9 +12,41 @@ function ipv4ToInt(ip: string): number {
 }
 
 /**
+ * Converts an IPv6 address string to a 128-bit BigInt.
+ * Handles :: compression and zone identifiers.
+ */
+function ipv6ToBigInt(ip: string): bigint {
+  // Strip zone identifier (e.g. fe80::1%lo0)
+  const withoutZone = ip.split('%')[0].toLowerCase();
+  let parts: string[];
+
+  if (withoutZone.includes('::')) {
+    const [head, tail] = withoutZone.split('::');
+    const headParts = head ? head.split(':').filter(Boolean) : [];
+    const tailParts = tail ? tail.split(':').filter(Boolean) : [];
+    const missing = 8 - headParts.length - tailParts.length;
+    parts = [...headParts, ...Array(missing).fill('0'), ...tailParts];
+  } else {
+    parts = withoutZone.split(':');
+  }
+
+  // Pad to 8 groups; handle edge cases like "::"
+  while (parts.length < 8) {
+    parts.push('0');
+  }
+
+  let result = 0n;
+  for (const part of parts) {
+    const value = part === '' ? 0 : parseInt(part || '0', 16);
+    result = (result << 16n) | BigInt(value);
+  }
+  return result;
+}
+
+/**
  * Checks whether `ip` is contained in the CIDR block `cidr`.
- * Supports both IPv4 CIDR (e.g. "10.0.0.0/8") and exact IPv4 matches.
- * For IPv6 this falls back to an exact string comparison (no CIDR).
+ * Supports both IPv4 and IPv6 CIDR (e.g. "10.0.0.0/8", "2001:db8::/32")
+ * and exact matches for either family.
  */
 function matchesCidr(ip: string, cidr: string): boolean {
   if (!cidr.includes('/')) {
@@ -25,13 +57,28 @@ function matchesCidr(ip: string, cidr: string): boolean {
   const [range, prefixStr] = cidr.split('/');
   const prefix = parseInt(prefixStr, 10);
 
+  if (Number.isNaN(prefix)) {
+    return false;
+  }
+
   if (net.isIPv4(ip) && net.isIPv4(range)) {
+    if (prefix < 0 || prefix > 32) return false;
     const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
     return (ipv4ToInt(ip) & mask) === (ipv4ToInt(range) & mask);
   }
 
-  // IPv6 CIDR – not implemented; fall back to exact match
-  return ip.toLowerCase() === range.toLowerCase();
+  if (net.isIPv6(ip) && net.isIPv6(range)) {
+    if (prefix < 0 || prefix > 128) return false;
+    if (prefix === 0) return true;
+    if (prefix === 128) {
+      return ipv6ToBigInt(ip) === ipv6ToBigInt(range);
+    }
+    const shift = 128n - BigInt(prefix);
+    return (ipv6ToBigInt(ip) >> shift) === (ipv6ToBigInt(range) >> shift);
+  }
+
+  // Mismatched families or invalid – never matches CIDR
+  return false;
 }
 
 /**
@@ -116,3 +163,6 @@ export function isIpAllowed(ip: string, allowedIps: string[]): boolean {
   if (!allowedIps || allowedIps.length === 0) return true;
   return allowedIps.some((entry) => matchesCidr(normalizeIp(ip), entry));
 }
+
+// Export for testing
+export { matchesCidr, ipv4ToInt, ipv6ToBigInt };
