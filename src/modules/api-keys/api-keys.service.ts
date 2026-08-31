@@ -156,6 +156,8 @@ export class ApiKeysService {
       expiresAt: key.expiresAt,
       lastUsedAt: null,
       isActive: true,
+      rateLimitLimit: key.rateLimitLimit,
+      rateLimitTtl: key.rateLimitTtl,
       allowedIps: key.allowedIps,
     });
     const saved = await this.apiKeyRepository.save(newKey);

@@ -5,6 +5,7 @@ import { ApiKeysService } from './api-keys.service';
 import { ApiKey, ApiKeyScope, ApiKeyEnvironment } from './api-key.entity';
 import { ApiKeyUsage } from './api-key-usage.entity';
 import { NotFoundException } from '@nestjs/common';
+import { AuditLogsService } from '../audit-logs/audit-logs.service';
 
 describe('ApiKeysService', () => {
     let service: ApiKeysService;
@@ -38,6 +39,7 @@ describe('ApiKeysService', () => {
                 { provide: getRepositoryToken(ApiKey), useValue: apiKeyRepository },
                 { provide: getRepositoryToken(ApiKeyUsage), useValue: apiKeyUsageRepository },
                 { provide: ConfigService, useValue: configService },
+                { provide: AuditLogsService, useValue: { record: jest.fn().mockResolvedValue(undefined) } },
             ],
         }).compile();
 
