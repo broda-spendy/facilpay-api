@@ -17,6 +17,11 @@ import { UsersService } from '../users/users.service';
 import {
   PaginatedResult,
 } from '../../common/interfaces/paginated-result.interface';
+import {
+  LedgerAccount,
+  LedgerReferenceType,
+} from '../ledger/ledger-entry.entity';
+import { appendLedgerTransaction } from '../ledger/ledger-transaction';
 
 @Injectable()
 export class SettlementsService {
@@ -259,6 +264,29 @@ export class SettlementsService {
       });
 
       const savedSettlement = await queryRunner.manager.save(settlement);
+
+      if (totalAmount > 0) {
+        await appendLedgerTransaction(queryRunner.manager, {
+          lines: [
+            {
+              merchantId: savedSettlement.merchantId,
+              currency: savedSettlement.currency,
+              account: LedgerAccount.AVAILABLE,
+              amount: -totalAmount,
+              referenceType: LedgerReferenceType.SETTLEMENT,
+              referenceId: savedSettlement.id,
+            },
+            {
+              merchantId: savedSettlement.merchantId,
+              currency: savedSettlement.currency,
+              account: LedgerAccount.PAYOUT,
+              amount: totalAmount,
+              referenceType: LedgerReferenceType.SETTLEMENT,
+              referenceId: savedSettlement.id,
+            },
+          ],
+        });
+      }
 
       await queryRunner.manager.update(
         Payment,
