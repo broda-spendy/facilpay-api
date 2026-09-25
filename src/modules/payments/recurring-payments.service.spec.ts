@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import {
   RecurringPaymentInterval,
@@ -8,17 +12,24 @@ import {
 describe('RecurringPaymentsService', () => {
   let service: RecurringPaymentsService;
   let mockRepository: any;
+  let mockCustomerRepository: any;
   let mockPaymentsService: any;
   let mockIdempotencyService: any;
   let mockWebhooksService: any;
   let mockAppLogger: any;
 
   beforeEach(() => {
+    mockCustomerRepository = {
+      findOneBy: jest.fn(),
+    };
     mockRepository = {
       create: jest.fn((data) => ({ ...data })),
       save: jest.fn((entity) => Promise.resolve(entity)),
       find: jest.fn(),
       findOneBy: jest.fn(),
+      manager: {
+        getRepository: jest.fn(() => mockCustomerRepository),
+      },
     };
 
     mockPaymentsService = {
@@ -61,6 +72,45 @@ describe('RecurringPaymentsService', () => {
       expect(plan.createdBy).toBe('user-1');
       expect(plan.status).toBe(RecurringPaymentStatus.ACTIVE);
       expect(plan.nextRunAt).toBeInstanceOf(Date);
+    });
+
+    it('persists a customer association owned by the requesting merchant', async () => {
+      mockCustomerRepository.findOneBy.mockResolvedValueOnce({
+        id: 'customer-1',
+        merchantId: 'user-1',
+      });
+
+      const plan = await service.create(
+        {
+          amount: 10,
+          currency: 'USD',
+          interval: RecurringPaymentInterval.MONTHLY,
+          customerId: 'customer-1',
+        },
+        'user-1',
+      );
+
+      expect(plan.customerId).toBe('customer-1');
+      expect(plan.merchantId).toBe('user-1');
+    });
+
+    it('rejects a customer owned by another merchant', async () => {
+      mockCustomerRepository.findOneBy.mockResolvedValueOnce({
+        id: 'customer-1',
+        merchantId: 'user-2',
+      });
+
+      await expect(
+        service.create(
+          {
+            amount: 10,
+            currency: 'USD',
+            interval: RecurringPaymentInterval.MONTHLY,
+            customerId: 'customer-1',
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('schedules the first run at startAt when provided', async () => {
@@ -208,6 +258,31 @@ describe('RecurringPaymentsService', () => {
       );
       expect(plan.lastRunAt).toEqual(dueAt);
       expect(plan.nextRunAt.getTime()).toBe(dueAt.getTime() + 24 * 60 * 60 * 1000);
+    });
+
+    it('copies the customer association to the generated payment', async () => {
+      const dueAt = new Date('2026-07-01T00:00:00.000Z');
+      const plan = {
+        id: 'plan-1',
+        amount: 20,
+        currency: 'USD',
+        interval: RecurringPaymentInterval.DAILY,
+        status: RecurringPaymentStatus.ACTIVE,
+        nextRunAt: dueAt,
+        merchantId: 'merchant-1',
+        customerId: 'customer-1',
+      };
+      mockRepository.find.mockResolvedValue([plan]);
+
+      await service.processDuePlans();
+
+      expect(mockPaymentsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 'customer-1',
+          merchantId: 'merchant-1',
+        }),
+        'merchant-1',
+      );
     });
 
     it('skips creating a duplicate payment when the run was already processed', async () => {

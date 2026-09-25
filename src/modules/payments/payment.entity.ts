@@ -69,6 +69,9 @@ export class Payment {
   @Column({ nullable: true })
   merchantId: string | null = null;
 
+  @Column({ type: 'uuid', nullable: true })
+  customerId: string | null = null;
+
   @Column({ nullable: true })
   merchantEmail: string | null = null;
 

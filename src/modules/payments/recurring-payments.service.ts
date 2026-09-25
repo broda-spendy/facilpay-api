@@ -19,6 +19,8 @@ import { IdempotencyService } from './idempotency.service';
 import { AppLogger } from '../logger/logger.service';
 import { Logger } from 'pino';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { Customer } from '../customers/customer.entity';
+import { resolveCustomerForMerchant } from '../customers/customer-ownership';
 
 @Injectable()
 export class RecurringPaymentsService {
@@ -47,13 +49,27 @@ export class RecurringPaymentsService {
       throw new BadRequestException('endAt must be in the future');
     }
 
+    let customerId: string | null = null;
+    let merchantId = dto.merchantId ?? null;
+    if (dto.customerId) {
+      const customer = await resolveCustomerForMerchant(
+        this.recurringPaymentRepository.manager.getRepository(Customer),
+        dto.customerId,
+        createdBy,
+        dto.merchantId,
+      );
+      customerId = customer.id;
+      merchantId = customer.merchantId;
+    }
+
     const nextRunAt = dto.startAt ? new Date(dto.startAt) : new Date();
     const plan = this.recurringPaymentRepository.create({
       amount: dto.amount,
       currency: dto.currency,
       interval: dto.interval,
       description: dto.description ?? null,
-      merchantId: dto.merchantId ?? null,
+      merchantId,
+      customerId,
       merchantEmail: dto.merchantEmail ?? null,
       payerEmail: dto.payerEmail ?? null,
       callbackUrl: dto.callbackUrl ?? null,
@@ -191,16 +207,23 @@ export class RecurringPaymentsService {
       );
 
       if (!existing) {
-        const payment = await this.paymentsService.create({
+        const paymentDto = {
           amount: plan.amount,
           currency: plan.currency,
           description: plan.description ?? undefined,
           merchantId: plan.merchantId ?? undefined,
+          customerId: plan.customerId ?? undefined,
           merchantEmail: plan.merchantEmail ?? undefined,
           payerEmail: plan.payerEmail ?? undefined,
           callbackUrl: plan.callbackUrl ?? undefined,
           metadata: plan.metadata ?? undefined,
-        });
+        };
+        const payment = plan.customerId
+          ? await this.paymentsService.create(
+              paymentDto,
+              plan.merchantId ?? undefined,
+            )
+          : await this.paymentsService.create(paymentDto);
         await this.idempotencyService.storeKey(idempotencyKey, requestBody, {
           paymentId: payment.id,
         });
